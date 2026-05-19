@@ -1,0 +1,81 @@
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# ESP-IDF managed components
+managed_components/
+
+# Flash encryption keys
+*.bin.enc
+flash_encryption_key.bin
+
+# OpenOCD / JTAG
+openocd.cfg.bak
+
+# Eclipse / IDE
+.settings/
+.cproject
+.project
+
+# VSCode (keep tasks/launch if needed, ignore local overrides)
+.vscode/ipch/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+ninja.build
+.ninja_deps
+.ninja_log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+develop-eggs/
+eggs/
+lib/
+lib64/
+parts/
+var/
+*.egg-link
+pip-wheel-metadata/
+.eggs/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# pytest
+.pytest_cache/
+.cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
