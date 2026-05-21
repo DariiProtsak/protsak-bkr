@@ -3,7 +3,7 @@
 ## Проект: ESP32-C6 + LCD 1602 + WiFi
 
 ### Обладнання
-- **Мікроконтролер:** ESP32-C6 (WROOM-1)
+- **Мікроконтролер:** ESP32-C5 (WROOM-1) — preview target у ESP-IDF v5.4
 - **Дисплей:** LCD 1602 з I2C-модулем HW-61
 - **Прошивка:** ESP-IDF v5.4.1 (C++)
 - **IDE:** VS Code + ESP-IDF Extension
@@ -41,7 +41,7 @@ git pull
 . C:\esp\activate_idf.ps1
 
 # У папці проекту (напр. C:\Users\user\OneDrive\BKR\code\firmware)
-idf set-target esp32c6     # встановити цільовий чіп
+idf --preview set-target esp32c5   # встановити цільовий чіп (C5 = preview target)
 idf menuconfig             # налаштування проекту
 idf build                  # компіляція
 idf flash                  # прошивка (підключити ESP32 через USB)
