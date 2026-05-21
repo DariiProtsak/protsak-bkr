@@ -1,8 +1,32 @@
 # Git — робочий процес
 
+## Проект: ESP32-C6 + LCD 1602 + WiFi
+
+### Обладнання
+- **Мікроконтролер:** ESP32-C6 (WROOM-1)
+- **Дисплей:** LCD 1602 з I2C-модулем HW-61
+- **Прошивка:** ESP-IDF v5.4.1 (C++)
+- **IDE:** VS Code + ESP-IDF Extension
+
+### Підключення
+| Дисплей | ESP32-C6 |
+|---------|----------|
+| VCC | 5V |
+| GND | GND |
+| SDA | GPIO 8 |
+| SCL | GPIO 9 |
+| I2C адреса | 0x27 або 0x3F |
+
+### Функціонал
+- Підключення до WiFi-роутера
+- Відображення інформації на LCD 1602 (I2C)
+- Прошивка через UART
+
+---
+
 ## Початок роботи (на будь-якому ПК)
 
-```bash
+```powershell
 git pull
 ```
 
@@ -10,9 +34,26 @@ git pull
 
 ---
 
+## ESP-IDF команди (активувати середовище спочатку)
+
+```powershell
+# Активація ESP-IDF
+. C:\esp\activate_idf.ps1
+
+# У папці проекту (напр. C:\Users\user\OneDrive\BKR\code\firmware)
+idf set-target esp32c6     # встановити цільовий чіп
+idf menuconfig             # налаштування проекту
+idf build                  # компіляція
+idf flash                  # прошивка (підключити ESP32 через USB)
+idf monitor                # серійний монітор (Ctrl+] для виходу)
+idf flash monitor          # прошити і одразу моніторити
+```
+
+---
+
 ## Кінець роботи (зберегти і залити)
 
-```bash
+```powershell
 git add .
 git commit -m "короткий опис що зробив"
 git push
@@ -37,3 +78,4 @@ OneDrive синхронізує файли, але не git-коміти. Якщ
 | Закінчуєш / переходиш на інший ПК | `git push` |
 | Перевірити статус | `git status` |
 | Переглянути історію | `git log --oneline` |
+| Знайти COM-порт ESP32 | `Get-WMIObject Win32_SerialPort \| Select Name,Description` |
