@@ -1,4 +1,5 @@
-# ESP32-C5 preview target — збирати через: idf.py --preview set-target esp32c5
+# ESP32-C5 (eco2, rev v1.0) — ESP-IDF v5.5.4
+# esp32c5 більше не preview, збирати: idf.py set-target esp32c5
 
 # WiFi CSI
 CONFIG_ESP_WIFI_CSI_ENABLED=y
