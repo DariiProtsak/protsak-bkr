@@ -1,0 +1,45 @@
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# Local editor workspace settings
+.vscode/
+
+# Local experiment runs (directory or symlink)
+/experiments
+
+# Local analysis output (keep skeleton files tracked)
+/out/*
+!/out/.gitkeep
+!/out/README.md
+
+# Legacy output folders
+/out_*/
+
+# Temporary data captures
+/data/experiments/
+/data/tmp/
+/data/*.tmp
+
+# Build artifacts
+/build/
+/dist/
+*.elf
+*.bin
+*.map
+*.hex
+sdkconfig
+sdkconfig.old
+
+# OS-specific clutter
+.DS_Store
+desktop.ini
+Thumbs.db

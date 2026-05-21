@@ -112,3 +112,52 @@ ESP-IDF v5.4.x використовував неправильний linker scri
 `vTaskDelay(pdMS_TO_TICKS(1))` при 100Hz FreeRTOS = 0 тіків → порушення тайменгу HD44780.  
 **Рішення:** замінено на `ets_delay_us()` для точних мікросекундних затримок.  
 Також додано авто-детекцію I2C адреси (0x27 / 0x3F).
+
+---
+
+## Що було зроблено (сесія 21.05.2026 — частина 2)
+
+### CSI формат виводу оновлено під parser.py керівника
+
+Додано `csi_capturing_example-master/` — Python-інструмент керівника для збору CSI.  
+Проаналізовано `parser.py` — очікує рядки формату:
+```
+CSI_DATA,<esp_timestamp_ms>,<mac>,<rssi>,[v0, v1, v2, ...]
+```
+
+**Зміни в `firmware/main/main.cpp`:**
+- Додано `#include "esp_timer.h"` для `esp_timer_get_time()`
+- `csi_callback` переписано: замість старого `CSI|rssi:%d|noise:%d|len:%d|ch:%d|data:...`  
+  тепер виводить `CSI_DATA,<ms>,<mac>,<rssi>,[v0, v1, ...]`
+- Значення buf[] кастуються до `int8_t` (знакові байти, як в прикладі керівника)
+
+**Зміни в `firmware/main/CMakeLists.txt`:**
+- Додано `esp_timer` до `REQUIRES` (потрібно для `esp_timer.h`)
+
+### Схема збору даних
+
+```
+ESP32-C5 → COM3 (115200) → capture.py → csi_capture.jsonl
+```
+
+Запуск збору даних на ПК:
+```powershell
+cd C:\Users\user\OneDrive\BKR\code\csi_capturing_example-master
+python -m csi_capture.capture -p COM3 -b 115200 -o my_data.jsonl
+```
+Зупинити: **Ctrl+C**
+
+Формат збереженого запису (JSONL):
+```json
+{"timestamp":1234567890,"rssi":-40,"csi":[0,8,-7,...],"esp_timestamp":12345,"mac":"aa:bb:cc:dd:ee:ff"}
+```
+
+### Структура гілок GitHub
+
+| Гілка | Призначення |
+|-------|-------------|
+| `main` | Стабільна прошивка — завжди робоча |
+| `feature/*` | Нові функції (напр. `feature/csi-filter`) |
+| `experiment/*` | Експерименти з CSI (напр. `experiment/distance-test`) |
+
+> **Правило:** `main` завжди прошивається без проблем. Нові ідеї — в окремих гілках.

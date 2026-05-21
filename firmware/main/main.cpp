@@ -9,6 +9,7 @@
 #include "esp_netif.h"
 #include "nvs_flash.h"
 #include "lwip/ip4_addr.h"
+#include "esp_timer.h"
 #include "lcd1602.h"
 
 static const char *TAG = "main";
@@ -36,13 +37,19 @@ static void csi_callback(void *ctx, wifi_csi_info_t *data)
 {
     wifi_pkt_rx_ctrl_t *rx = &data->rx_ctrl;
 
-    // Виводимо сирі дані у серійний порт
-    printf("CSI|rssi:%d|noise:%d|len:%d|ch:%d|data:",
-           rx->rssi, rx->noise_floor, data->len, rx->channel);
+    // CSI_DATA,<esp_ms>,<mac>,<rssi>,[v0, v1, ...] — формат для parser.py
+    int64_t esp_ms = esp_timer_get_time() / 1000;
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             data->mac[0], data->mac[1], data->mac[2],
+             data->mac[3], data->mac[4], data->mac[5]);
+
+    printf("CSI_DATA,%lld,%s,%d,[", (long long)esp_ms, mac_str, (int)rx->rssi);
     for (int i = 0; i < data->len; i++) {
-        printf("%d,", data->buf[i]);
+        if (i > 0) printf(", ");
+        printf("%d", (int)(int8_t)data->buf[i]);
     }
-    printf("\n");
+    printf("]\n");
 
     // Оновлюємо рядок 2 LCD: RSSI + довжина CSI
     snprintf(lcd_line2, sizeof(lcd_line2), "R:%-4d L:%-4d  ", (int)rx->rssi, (int)data->len);
