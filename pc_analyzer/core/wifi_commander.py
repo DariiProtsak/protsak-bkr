@@ -5,7 +5,7 @@ class WifiCommander:
     def __init__(self, reader: SerialReader):
         self._reader = reader
 
-    def connect(self, ssid: str, password: str, timeout: float = 10.0) -> bool:
+    def connect(self, ssid: str, password: str, timeout: float = 20.0) -> bool:
         self._reader.write(f"WIFI_CONNECT:{ssid}:{password}\n")
         deadline = time.time() + timeout
         while time.time() < deadline:

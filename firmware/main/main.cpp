@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 #include "lwip/ip4_addr.h"
 #include "esp_timer.h"
+#include "driver/uart.h"
 #include "lcd1602.h"
 
 static const char *TAG = "main";
@@ -29,12 +30,12 @@ static char lcd_line1[32] = "Connecting...   ";
 static char lcd_line2[32] = "                ";
 static volatile bool lcd_needs_update   = false;
 static volatile bool csi_enabled        = false;
-static volatile bool g_ctrl_disconnect  = false; // prevent auto-reconnect during cmd
+static volatile bool g_ctrl_disconnect  = false;
 
 // ── CSI callback ─────────────────────────────────────────────────────────────
 static void csi_callback(void *ctx, wifi_csi_info_t *data)
 {
-    int64_t ts_ms  = esp_timer_get_time() / 1000;
+    int64_t ts_ms   = esp_timer_get_time() / 1000;
     int     n_pairs = data->len / 2;
 
     // JSONL: {"timestamp":...,"rssi":...,"csi":[[re,im],...]}
@@ -63,7 +64,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(wifi_events, WIFI_CONNECTED_BIT);
         if (!g_ctrl_disconnect) {
-            // unexpected drop — auto-reconnect with current credentials
             strncpy(lcd_line1, "WiFi lost...    ", sizeof(lcd_line1) - 1);
             lcd_needs_update = true;
             esp_wifi_connect();
@@ -120,8 +120,9 @@ static void csi_start(void)
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(csi_callback, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi(true));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true)); // capture all frames → high CSI rate
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     csi_enabled = true;
+    ESP_LOGI(TAG, "CSI + promiscuous enabled");
 }
 
 static void csi_stop(void)
@@ -138,29 +139,38 @@ static void csi_stop(void)
 // Responds: WIFI_OK  |  WIFI_FAIL
 static void uart_cmd_task(void *pv)
 {
+    // Install UART driver so uart_read_bytes() works reliably on UART0.
+    // TX buffer = 0: printf() still writes directly to TX FIFO (no conflict).
+    static const uart_port_t PORT = (uart_port_t)CONFIG_ESP_CONSOLE_UART_NUM;
+    uart_driver_install(PORT, 512, 0, 0, NULL, 0);
+
     static char line[160];
-    int pos = 0;
+    int     pos = 0;
+    uint8_t ch;
 
     while (true) {
-        int c = getchar();
-        if (c < 0) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-        if (c == '\r') continue;
+        int n = uart_read_bytes(PORT, &ch, 1,
+                                pdMS_TO_TICKS(100));
+        if (n <= 0) continue;
+        if (ch == '\r') continue;
 
-        if (c == '\n') {
+        if (ch == '\n') {
             if (pos == 0) continue;
             line[pos] = '\0';
             pos = 0;
 
             if (strncmp(line, "WIFI_CONNECT:", 13) == 0) {
-                char *rest   = line + 13;
-                char *colon  = strchr(rest, ':');
-                if (colon == NULL) { printf("WIFI_FAIL\n"); continue; }
+                char *rest  = line + 13;
+                char *colon = strchr(rest, ':');
+                if (colon == NULL) {
+                    printf("WIFI_FAIL\n");
+                    continue;
+                }
                 *colon = '\0';
                 const char *new_ssid = rest;
                 const char *new_pass = colon + 1;
+
+                ESP_LOGI(TAG, "WIFI_CONNECT ssid=%s", new_ssid);
 
                 csi_stop();
                 g_ctrl_disconnect = true;
@@ -180,7 +190,7 @@ static void uart_cmd_task(void *pv)
 
                 EventBits_t bits = xEventGroupWaitBits(
                     wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                    pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+                    pdFALSE, pdFALSE, pdMS_TO_TICKS(15000));
 
                 if (bits & WIFI_CONNECTED_BIT) {
                     printf("WIFI_OK\n");
@@ -192,7 +202,7 @@ static void uart_cmd_task(void *pv)
                 }
             }
         } else if (pos < (int)sizeof(line) - 1) {
-            line[pos++] = (char)c;
+            line[pos++] = (char)ch;
         }
     }
 }
@@ -222,7 +232,7 @@ static void lcd_task(void *pvParam)
 // ── app_main ──────────────────────────────────────────────────────────────────
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "BKR firmware v2.0 starting");
+    ESP_LOGI(TAG, "BKR firmware v2.1 starting");
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -233,13 +243,13 @@ extern "C" void app_main(void)
     static LCD1602 lcd(I2C_SDA_PIN, I2C_SCL_PIN, LCD_I2C_ADDR);
     lcd.init();
     lcd.clear();
-    lcd.print(0, 0, "BKR v2.0");
+    lcd.print(0, 0, "BKR v2.1");
     lcd.print(0, 1, "WiFi init...");
     lcd_ptr = &lcd;
     vTaskDelay(pdMS_TO_TICKS(500));
 
     xTaskCreate(lcd_task,      "lcd_task",  2048, &lcd, 5, NULL);
-    xTaskCreate(uart_cmd_task, "uart_cmd",  4096, NULL, 3, NULL);
+    xTaskCreate(uart_cmd_task, "uart_cmd",  4096, NULL, 4, NULL);
 
     wifi_init("Darii", "darkosik");
 
@@ -251,7 +261,7 @@ extern "C" void app_main(void)
         csi_start();
     } else {
         ESP_LOGW(TAG, "WiFi timeout — waiting for WIFI_CONNECT via UART");
-        strncpy(lcd_line1, "Send WIFI_CONNECT", sizeof(lcd_line1) - 1);
+        strncpy(lcd_line1, "Send WIFI cmd   ", sizeof(lcd_line1) - 1);
         lcd_needs_update = true;
     }
 
