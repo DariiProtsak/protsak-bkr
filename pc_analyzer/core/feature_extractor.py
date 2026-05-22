@@ -17,7 +17,8 @@ class FeatureExtractor:
     def fit_transform(self, X: np.ndarray) -> np.ndarray:
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
-        self.pca = PCA(n_components=N_COMPONENTS)
+        n = min(N_COMPONENTS, X.shape[0], X.shape[1])
+        self.pca = PCA(n_components=n)
         return self.pca.fit_transform(X_scaled)
 
     def transform(self, X: np.ndarray) -> np.ndarray:

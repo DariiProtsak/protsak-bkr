@@ -44,7 +44,9 @@ class ScreenCollect(ctk.CTkFrame):
 
         self._progress = ctk.CTkProgressBar(step1, width=380)
         self._progress.set(0)
-        self._progress.grid(row=2, column=0, columnspan=4, padx=10, pady=4, sticky="ew")
+        self._progress.grid(row=2, column=0, columnspan=3, padx=10, pady=4, sticky="ew")
+        self._timer = ctk.CTkLabel(step1, text="0 / 60 сек", width=90, text_color="gray")
+        self._timer.grid(row=2, column=3, padx=4)
         self._counter = ctk.CTkLabel(step1, text="0 пакетів", width=80)
         self._counter.grid(row=2, column=4, padx=8)
 
@@ -108,6 +110,7 @@ class ScreenCollect(ctk.CTkFrame):
         self._collecting = True
         self._collect_btn.configure(text="■  Стоп")
         self._progress.set(0)
+        self._timer.configure(text=f"0 / {duration} сек")
         self._counter.configure(text="0 пакетів")
 
         def task():
@@ -126,13 +129,15 @@ class ScreenCollect(ctk.CTkFrame):
                     pkt["label"] = label
                     f.write(json.dumps(pkt, ensure_ascii=False) + "\n")
                     count += 1
-                    self.after(0, self._update_progress, min(elapsed / duration, 1.0), count)
+                    self.after(0, self._update_progress,
+                               min(elapsed / duration, 1.0), int(elapsed), duration, count)
             self.after(0, self._on_collect_done)
 
         threading.Thread(target=task, daemon=True).start()
 
-    def _update_progress(self, pct: float, count: int):
+    def _update_progress(self, pct: float, elapsed_sec: int, duration: int, count: int):
         self._progress.set(pct)
+        self._timer.configure(text=f"{elapsed_sec} / {duration} сек")
         self._counter.configure(text=f"{count} пакетів")
 
     def _on_collect_done(self):

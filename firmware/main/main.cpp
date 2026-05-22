@@ -120,6 +120,7 @@ static void csi_start(void)
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(csi_callback, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi(true));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true)); // capture all frames → high CSI rate
     csi_enabled = true;
 }
 
@@ -127,6 +128,7 @@ static void csi_stop(void)
 {
     if (csi_enabled) {
         esp_wifi_set_csi(false);
+        esp_wifi_set_promiscuous(false);
         csi_enabled = false;
     }
 }
