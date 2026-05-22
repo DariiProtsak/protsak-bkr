@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "firmware (ESP32-C5)",
+      "path": "firmware"
+    },
+    {
+      "name": "csi_tool",
+      "path": "csi_capturing_example-master"
+    }
+  ],
+  "settings": {
+    "idf.adapterTargetName": "esp32c5",
+    "idf.espIdfPath": "C:/esp/esp-idf",
+    "idf.toolsPath": "C:/Users/user/.espressif",
+    "idf.port": "COM3",
+    "idf.flashBaudRate": "460800",
+    "idf.monitorBaudRate": "115200"
+  }
+}

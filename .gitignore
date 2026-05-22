@@ -19,8 +19,8 @@ openocd.cfg.bak
 .cproject
 .project
 
-# VSCode (keep tasks/launch if needed, ignore local overrides)
-.vscode/ipch/
+# VSCode (local machine settings — paths and COM port are not portable)
+.vscode/
 
 # CMake
 CMakeCache.txt
@@ -82,3 +82,15 @@ desktop.ini
 
 # Claude Code internal files
 .claude/
+
+# pc_analyzer — generated files (not versioned)
+pc_analyzer/model.pkl
+pc_analyzer/pca.pkl
+pc_analyzer/scaler.pkl
+pc_analyzer/config.json
+pc_analyzer/data/dataset.jsonl
+
+# PyInstaller output
+pc_analyzer/dist/
+pc_analyzer/build/
+pc_analyzer/*.spec
