@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -14,9 +15,6 @@
 
 static const char *TAG = "main";
 
-#define WIFI_SSID "Darii"
-#define WIFI_PASS "darkosik"
-
 #define I2C_SDA_PIN  GPIO_NUM_8
 #define I2C_SCL_PIN  GPIO_NUM_9
 #define LCD_I2C_ADDR 0x27
@@ -27,36 +25,35 @@ static const char *TAG = "main";
 static EventGroupHandle_t wifi_events;
 static LCD1602 *lcd_ptr = nullptr;
 
-// Буфери для LCD (32 байти — безпечно для snprintf, LCD показує перші 16)
 static char lcd_line1[32] = "Connecting...   ";
 static char lcd_line2[32] = "                ";
-static volatile bool lcd_needs_update = false;
+static volatile bool lcd_needs_update   = false;
+static volatile bool csi_enabled        = false;
+static volatile bool g_ctrl_disconnect  = false; // prevent auto-reconnect during cmd
 
-// ── CSI callback ────────────────────────────────────────────────────────────
+// ── CSI callback ─────────────────────────────────────────────────────────────
 static void csi_callback(void *ctx, wifi_csi_info_t *data)
 {
-    wifi_pkt_rx_ctrl_t *rx = &data->rx_ctrl;
+    int64_t ts_ms  = esp_timer_get_time() / 1000;
+    int     n_pairs = data->len / 2;
 
-    // CSI_DATA,<esp_ms>,<mac>,<rssi>,[v0, v1, ...] — формат для parser.py
-    int64_t esp_ms = esp_timer_get_time() / 1000;
-    char mac_str[18];
-    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             data->mac[0], data->mac[1], data->mac[2],
-             data->mac[3], data->mac[4], data->mac[5]);
-
-    printf("CSI_DATA,%lld,%s,%d,[", (long long)esp_ms, mac_str, (int)rx->rssi);
-    for (int i = 0; i < data->len; i++) {
-        if (i > 0) printf(", ");
-        printf("%d", (int)(int8_t)data->buf[i]);
+    // JSONL: {"timestamp":...,"rssi":...,"csi":[[re,im],...]}
+    printf("{\"timestamp\":%lld,\"rssi\":%d,\"csi\":[",
+           (long long)ts_ms, (int)data->rx_ctrl.rssi);
+    for (int k = 0; k < n_pairs; k++) {
+        int8_t im = (int8_t)data->buf[2 * k];
+        int8_t re = (int8_t)data->buf[2 * k + 1];
+        if (k > 0) printf(",");
+        printf("[%d,%d]", (int)re, (int)im);
     }
-    printf("]\n");
+    printf("]}\n");
 
-    // Оновлюємо рядок 2 LCD: RSSI + довжина CSI
-    snprintf(lcd_line2, sizeof(lcd_line2), "R:%-4d L:%-4d  ", (int)rx->rssi, (int)data->len);
+    snprintf(lcd_line2, sizeof(lcd_line2), "R:%-4d L:%-4d  ",
+             (int)data->rx_ctrl.rssi, (int)data->len);
     lcd_needs_update = true;
 }
 
-// ── WiFi events ──────────────────────────────────────────────────────────────
+// ── WiFi events ───────────────────────────────────────────────────────────────
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                                 int32_t id, void *data)
 {
@@ -64,67 +61,141 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         esp_wifi_connect();
 
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        strncpy(lcd_line1, "WiFi lost...    ", sizeof(lcd_line1) - 1);
-        lcd_needs_update = true;
-        esp_wifi_connect();
+        xEventGroupClearBits(wifi_events, WIFI_CONNECTED_BIT);
+        if (!g_ctrl_disconnect) {
+            // unexpected drop — auto-reconnect with current credentials
+            strncpy(lcd_line1, "WiFi lost...    ", sizeof(lcd_line1) - 1);
+            lcd_needs_update = true;
+            esp_wifi_connect();
+        }
 
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        char ip_str[16];
-        esp_ip4addr_ntoa(&event->ip_info.ip, ip_str, sizeof(ip_str));
-        snprintf(lcd_line1, sizeof(lcd_line1), "%-16s", ip_str);
+        ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
+        char ip[16];
+        esp_ip4addr_ntoa(&ev->ip_info.ip, ip, sizeof(ip));
+        snprintf(lcd_line1, sizeof(lcd_line1), "%-16s", ip);
         lcd_needs_update = true;
-        ESP_LOGI(TAG, "Got IP: %s", ip_str);
+        ESP_LOGI(TAG, "Got IP: %s", ip);
         xEventGroupSetBits(wifi_events, WIFI_CONNECTED_BIT);
     }
 }
 
-// ── WiFi init ────────────────────────────────────────────────────────────────
-static void wifi_init(void)
+// ── WiFi init ─────────────────────────────────────────────────────────────────
+static void wifi_init(const char *ssid, const char *pass)
 {
-    wifi_events = xEventGroupCreate();
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    if (wifi_events == nullptr) {
+        wifi_events = xEventGroupCreate();
+        ESP_ERROR_CHECK(esp_netif_init());
+        ESP_ERROR_CHECK(esp_event_loop_create_default());
+        esp_netif_create_default_wifi_sta();
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(
+            WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(
+            IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL));
+
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    }
 
     wifi_config_t wifi_cfg = {};
-    strncpy((char *)wifi_cfg.sta.ssid,     WIFI_SSID, sizeof(wifi_cfg.sta.ssid));
-    strncpy((char *)wifi_cfg.sta.password, WIFI_PASS,  sizeof(wifi_cfg.sta.password));
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    strncpy((char *)wifi_cfg.sta.ssid,     ssid, sizeof(wifi_cfg.sta.ssid));
+    strncpy((char *)wifi_cfg.sta.password, pass,  sizeof(wifi_cfg.sta.password));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGI(TAG, "Connecting to SSID: %s", WIFI_SSID);
 }
 
-// ── CSI init (після підключення до WiFi) ─────────────────────────────────────
-static void csi_init(void)
+// ── CSI ───────────────────────────────────────────────────────────────────────
+static void csi_start(void)
 {
-    // ESP32-C6: wifi_csi_config_t = wifi_csi_acquire_config_t (MAC v2)
-    wifi_csi_config_t csi_cfg = {};
-    csi_cfg.enable              = 1;
-    csi_cfg.acquire_csi_legacy  = 1;  // L-LTF (11g)
-    csi_cfg.acquire_csi_ht20    = 1;  // HT-LTF HT20
-    csi_cfg.acquire_csi_ht40    = 1;  // HT-LTF HT40
-    csi_cfg.acquire_csi_su      = 1;  // HE-LTF SU
-    csi_cfg.dump_ack_en         = 0;
-
-    ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_cfg));
+    wifi_csi_config_t cfg = {};
+    cfg.enable             = 1;
+    cfg.acquire_csi_legacy = 1;
+    cfg.acquire_csi_ht20   = 1;
+    cfg.acquire_csi_ht40   = 1;
+    cfg.acquire_csi_su     = 1;
+    cfg.dump_ack_en        = 0;
+    ESP_ERROR_CHECK(esp_wifi_set_csi_config(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(csi_callback, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi(true));
-    ESP_LOGI(TAG, "CSI enabled");
+    csi_enabled = true;
 }
 
-// ── LCD update task ───────────────────────────────────────────────────────────
+static void csi_stop(void)
+{
+    if (csi_enabled) {
+        esp_wifi_set_csi(false);
+        csi_enabled = false;
+    }
+}
+
+// ── UART command task ─────────────────────────────────────────────────────────
+// Handles: WIFI_CONNECT:<ssid>:<password>
+// Responds: WIFI_OK  |  WIFI_FAIL
+static void uart_cmd_task(void *pv)
+{
+    static char line[160];
+    int pos = 0;
+
+    while (true) {
+        int c = getchar();
+        if (c < 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        if (c == '\r') continue;
+
+        if (c == '\n') {
+            if (pos == 0) continue;
+            line[pos] = '\0';
+            pos = 0;
+
+            if (strncmp(line, "WIFI_CONNECT:", 13) == 0) {
+                char *rest   = line + 13;
+                char *colon  = strchr(rest, ':');
+                if (colon == NULL) { printf("WIFI_FAIL\n"); continue; }
+                *colon = '\0';
+                const char *new_ssid = rest;
+                const char *new_pass = colon + 1;
+
+                csi_stop();
+                g_ctrl_disconnect = true;
+                esp_wifi_disconnect();
+                xEventGroupClearBits(wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+
+                wifi_config_t wifi_cfg = {};
+                strncpy((char *)wifi_cfg.sta.ssid,     new_ssid, sizeof(wifi_cfg.sta.ssid));
+                strncpy((char *)wifi_cfg.sta.password, new_pass,  sizeof(wifi_cfg.sta.password));
+                ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
+
+                strncpy(lcd_line1, "Connecting...   ", sizeof(lcd_line1) - 1);
+                lcd_needs_update = true;
+
+                g_ctrl_disconnect = false;
+                esp_wifi_connect();
+
+                EventBits_t bits = xEventGroupWaitBits(
+                    wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                    pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+
+                if (bits & WIFI_CONNECTED_BIT) {
+                    printf("WIFI_OK\n");
+                    csi_start();
+                } else {
+                    printf("WIFI_FAIL\n");
+                    strncpy(lcd_line1, "WiFi fail!      ", sizeof(lcd_line1) - 1);
+                    lcd_needs_update = true;
+                }
+            }
+        } else if (pos < (int)sizeof(line) - 1) {
+            line[pos++] = (char)c;
+        }
+    }
+}
+
+// ── LCD task ──────────────────────────────────────────────────────────────────
 static void lcd_task(void *pvParam)
 {
     LCD1602 *lcd = (LCD1602 *)pvParam;
@@ -146,54 +217,43 @@ static void lcd_task(void *pvParam)
     }
 }
 
-// ── Точка входу ──────────────────────────────────────────────────────────────
+// ── app_main ──────────────────────────────────────────────────────────────────
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "BKR firmware v1.0 starting");
+    ESP_LOGI(TAG, "BKR firmware v2.0 starting");
 
-    // NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    // LCD
     static LCD1602 lcd(I2C_SDA_PIN, I2C_SCL_PIN, LCD_I2C_ADDR);
     lcd.init();
     lcd.clear();
-    lcd.print(0, 0, "BKR v1.0");
+    lcd.print(0, 0, "BKR v2.0");
     lcd.print(0, 1, "WiFi init...");
     lcd_ptr = &lcd;
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    // LCD task
-    xTaskCreate(lcd_task, "lcd_task", 2048, &lcd, 5, NULL);
+    xTaskCreate(lcd_task,      "lcd_task",  2048, &lcd, 5, NULL);
+    xTaskCreate(uart_cmd_task, "uart_cmd",  4096, NULL, 3, NULL);
 
-    // WiFi
-    wifi_init();
+    wifi_init("Darii", "darkosik");
 
-    // Чекаємо підключення
     EventBits_t bits = xEventGroupWaitBits(wifi_events,
         WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE,
         pdMS_TO_TICKS(15000));
 
     if (bits & WIFI_CONNECTED_BIT) {
-        csi_init();
+        csi_start();
     } else {
-        ESP_LOGW(TAG, "WiFi connection timeout");
-        strncpy(lcd_line1, "WiFi timeout!   ", sizeof(lcd_line1) - 1);
-        strncpy(lcd_line2, "Check SSID/pass ", sizeof(lcd_line2) - 1);
+        ESP_LOGW(TAG, "WiFi timeout — waiting for WIFI_CONNECT via UART");
+        strncpy(lcd_line1, "Send WIFI_CONNECT", sizeof(lcd_line1) - 1);
         lcd_needs_update = true;
     }
 
-    // Головний цикл — CSI надходить через callback
-    uint32_t tick = 0;
     while (true) {
-        if (tick % 10 == 0) {
-            ESP_LOGI(TAG, "Running... (tick=%lu)", tick);
-        }
-        tick++;
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }

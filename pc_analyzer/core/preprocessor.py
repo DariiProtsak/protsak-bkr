@@ -1,9 +1,7 @@
 import math
 
-NUM_SUBCARRIERS = 114
-
 def extract_amplitudes(packet: dict) -> list[float] | None:
     csi = packet.get("csi")
-    if not csi or len(csi) != NUM_SUBCARRIERS:
+    if not csi or len(csi) < 2:
         return None
     return [math.sqrt(r ** 2 + i ** 2) for r, i in csi]
