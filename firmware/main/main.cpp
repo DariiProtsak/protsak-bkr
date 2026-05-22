@@ -172,6 +172,16 @@ static void uart_cmd_task(void *pv)
 
                 ESP_LOGI(TAG, "WIFI_CONNECT ssid=%s", new_ssid);
 
+                // If already connected to the same SSID — reply immediately
+                wifi_ap_record_t ap_info = {};
+                if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK &&
+                    strcmp((char *)ap_info.ssid, new_ssid) == 0) {
+                    ESP_LOGI(TAG, "Already connected to %s", new_ssid);
+                    printf("WIFI_OK\n");
+                    if (!csi_enabled) csi_start();
+                    continue;
+                }
+
                 csi_stop();
                 g_ctrl_disconnect = true;
                 esp_wifi_disconnect();

@@ -14,4 +14,7 @@ class WifiCommander:
                 return True
             if line == "WIFI_FAIL":
                 return False
+            # CSI data arriving = ESP32 already connected and running
+            if line.startswith("{") and "csi" in line:
+                return True
         return False
