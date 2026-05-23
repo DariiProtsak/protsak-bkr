@@ -35,17 +35,21 @@ class Classifier:
 
         result = TrainingResult()
 
+        all_labels = list(range(len(CLASSES)))
+
         knn_pred = self.knn.predict(X_te)
         result.knn_accuracy = accuracy_score(y_te, knn_pred)
         result.knn_report   = classification_report(y_te, knn_pred, output_dict=True,
-                                                     target_names=CLASSES, zero_division=0)
-        result.knn_cm       = confusion_matrix(y_te, knn_pred)
+                                                     target_names=CLASSES, labels=all_labels,
+                                                     zero_division=0)
+        result.knn_cm       = confusion_matrix(y_te, knn_pred, labels=all_labels)
 
         svm_pred = self.svm.predict(X_te)
         result.svm_accuracy = accuracy_score(y_te, svm_pred)
         result.svm_report   = classification_report(y_te, svm_pred, output_dict=True,
-                                                     target_names=CLASSES, zero_division=0)
-        result.svm_cm       = confusion_matrix(y_te, svm_pred)
+                                                     target_names=CLASSES, labels=all_labels,
+                                                     zero_division=0)
+        result.svm_cm       = confusion_matrix(y_te, svm_pred, labels=all_labels)
         return result
 
     def predict(self, X: np.ndarray) -> tuple[str, float]:
