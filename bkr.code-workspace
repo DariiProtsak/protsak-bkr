@@ -5,8 +5,8 @@
       "path": "firmware"
     },
     {
-      "name": "csi_tool",
-      "path": "csi_capturing_example-master"
+      "name": "pc_analyzer",
+      "path": "pc_analyzer"
     }
   ],
   "settings": {
