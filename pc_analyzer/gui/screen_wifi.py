@@ -57,7 +57,7 @@ class ScreenWifi(ctk.CTkFrame):
         self.update()
 
         def task():
-            ok = WifiCommander(self.app.serial).connect(ssid, pwd, timeout=10.0)
+            ok = WifiCommander(self.app.serial).connect(ssid, pwd, timeout=20.0)
             self.after(0, self._on_result, ok, ssid)
 
         threading.Thread(target=task, daemon=True).start()

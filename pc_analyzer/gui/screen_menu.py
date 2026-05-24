@@ -19,9 +19,18 @@ class ScreenMenu(ctk.CTkFrame):
         self._monitor_btn = ctk.CTkButton(self, text="Моніторинг", width=280, height=52,
                                           command=lambda: self.app.show("monitor"))
         self._monitor_btn.pack(pady=10)
+        ctk.CTkButton(self, text="Змінити Wi-Fi мережу", width=280, height=40,
+                      fg_color="transparent", border_width=1,
+                      command=self._change_wifi).pack(pady=(20, 0))
 
     def on_show(self):
         port = self.app.cfg.get("com_port", "?")
-        self._status.configure(text=f"Порт: {port}  |  ESP32 підключено")
+        ssid = self.app.cfg.get("ssid", "")
+        info = f"Порт: {port}  |  {ssid}" if ssid else f"Порт: {port}  |  ESP32 підключено"
+        self._status.configure(text=info)
         state = "normal" if Classifier.model_exists() else "disabled"
         self._monitor_btn.configure(state=state)
+
+    def _change_wifi(self):
+        self.app.serial.stop()
+        self.app.show("wifi")

@@ -11,6 +11,7 @@ class SerialReader:
         self._thread: threading.Thread | None = None
         self._running = False
         self.queue: Queue = Queue()
+        self.esp32_ip: str | None = None
 
     def connect(self) -> bool:
         try:
@@ -29,6 +30,8 @@ class SerialReader:
             self._serial.close()
 
     def start(self):
+        if self._thread and self._thread.is_alive():
+            return
         self._running = True
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._thread.start()
@@ -46,7 +49,11 @@ class SerialReader:
                 if not line:
                     continue
                 try:
-                    self.queue.put(json.loads(line))
+                    pkt = json.loads(line)
+                    if "ip" in pkt and "csi" not in pkt:
+                        self.esp32_ip = pkt["ip"]
+                    else:
+                        self.queue.put(pkt)
                 except json.JSONDecodeError:
                     pass
             except (serial.SerialException, OSError):

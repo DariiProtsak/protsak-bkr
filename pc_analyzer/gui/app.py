@@ -8,6 +8,7 @@ CONFIG_PATH = os.path.join(_BASE, "config.json")
 _DEFAULTS = {
     "com_port": "COM3",
     "ssid": "",
+    "esp_ip": "",
     "collect_duration_sec": 60,
     "monitor_block_sec": 30,
 }
