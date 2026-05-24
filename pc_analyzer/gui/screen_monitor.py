@@ -9,18 +9,11 @@ from queue import Empty
 
 from core.preprocessor import extract_amplitudes
 from core.feature_extractor import FeatureExtractor, SCALER_PATH, PCA_PATH
-from core.classifier import Classifier, CLASSES
+from core.classifier import Classifier, class_color
 from core.udp_pinger import UdpPinger
 
 _BG   = "#1e1e2e"
 _DARK = "#2b2b2b"
-CLASS_COLORS = {
-    "Пряма видимість":   "#4caf50",
-    "Меблі":             "#ffc107",
-    "Міжкімнатні двері": "#29b6f6",
-    "Одинарна стіна":    "#f44336",
-    "Подвійна стіна":    "#ab47bc",
-}
 
 class ScreenMonitor(ctk.CTkFrame):
     def __init__(self, app):
@@ -32,6 +25,10 @@ class ScreenMonitor(ctk.CTkFrame):
         self._clf = Classifier()
         self._pinger: UdpPinger | None = None
         self._build()
+
+    @property
+    def _class_colors(self) -> dict[str, str]:
+        return {cls: class_color(i) for i, cls in enumerate(self._clf.classes)}
 
     def _build(self):
         # ── Верхня панель ────────────────────────────────────────────────────
@@ -81,7 +78,7 @@ class ScreenMonitor(ctk.CTkFrame):
         self._ax_time.set_xlabel("Блок #", color="gray", fontsize=8)
         self._ax_time.set_yticks([])
         legend = [mpatches.Patch(color=c, label=cls)
-                  for cls, c in CLASS_COLORS.items()]
+                  for cls, c in self._class_colors.items()]
         self._ax_time.legend(handles=legend, loc="upper right",
                              fontsize=7, facecolor="#333", labelcolor="white")
         self._mpl_canvas.draw()
@@ -213,7 +210,7 @@ class ScreenMonitor(ctk.CTkFrame):
         threading.Thread(target=task, daemon=True).start()
 
     def _update_ui(self, amplitudes: np.ndarray, cls: str, prob: float):
-        color = CLASS_COLORS.get(cls, "white")
+        color = self._class_colors.get(cls, "white")
         self._result_lbl.configure(text=f"{cls}  {prob:.0%}", text_color=color)
 
         # Амплітуди
@@ -234,14 +231,14 @@ class ScreenMonitor(ctk.CTkFrame):
         for spine in self._ax_time.spines.values():
             spine.set_edgecolor("#444")
         for t, c in self._history:
-            self._ax_time.axvspan(t, t + 1, color=CLASS_COLORS.get(c, "gray"), alpha=0.85)
+            self._ax_time.axvspan(t, t + 1, color=self._class_colors.get(c, "gray"), alpha=0.85)
         self._ax_time.set_xlim(0, max(len(self._history) + 1, 10))
         self._ax_time.set_ylim(0, 1)
         self._ax_time.set_yticks([])
         self._ax_time.set_title("Часова шкала класів", color="white", fontsize=9)
         self._ax_time.set_xlabel("Блок #", color="gray", fontsize=8)
         legend = [mpatches.Patch(color=c, label=cls)
-                  for cls, c in CLASS_COLORS.items()]
+                  for cls, c in self._class_colors.items()]
         self._ax_time.legend(handles=legend, loc="upper right",
                              fontsize=7, facecolor="#333", labelcolor="white")
 

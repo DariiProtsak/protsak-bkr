@@ -10,7 +10,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from core.preprocessor import extract_amplitudes
 from core.feature_extractor import FeatureExtractor
-from core.classifier import Classifier, CLASSES
+from core.classifier import Classifier, class_color
 from core.udp_pinger import UdpPinger
 from core.analytics import (compute_los_reference, compute_class_stats,
                               compute_separability, train_rssi_baselines, W_RSSI)
@@ -18,17 +18,47 @@ from core.analytics import (compute_los_reference, compute_class_stats,
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET_PATH = os.path.join(_BASE, "data", "dataset.jsonl")
 
+
 class ScreenCollect(ctk.CTkFrame):
     def __init__(self, app):
         super().__init__(app, fg_color="transparent")
         self.app = app
         self._collecting = False
         self._pinger: UdpPinger | None = None
+        self._class_entries: list[ctk.CTkEntry] = []
+        self._ds_labels: dict[str, ctk.CTkLabel] = {}
         self._build()
+
+    @property
+    def _classes(self) -> list[str]:
+        return self.app.cfg.get("classes", ["Клас 1", "Клас 2"])
 
     def _build(self):
         ctk.CTkLabel(self, text="Навчання моделі",
                      font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(16, 4))
+
+        # ── Редактор класів ──────────────────────────────────────────────────
+        ce = ctk.CTkFrame(self)
+        ce.pack(fill="x", padx=28, pady=4)
+        ctk.CTkLabel(ce, text="Класи (сценарії):",
+                     font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, columnspan=10, sticky="w", padx=10, pady=(8, 2))
+
+        self._entry_grid = ctk.CTkFrame(ce, fg_color="transparent")
+        self._entry_grid.grid(row=1, column=0, columnspan=10, sticky="w", padx=6)
+        self._rebuild_class_entries()
+
+        btn_row = ctk.CTkFrame(ce, fg_color="transparent")
+        btn_row.grid(row=2, column=0, columnspan=10, sticky="w", padx=10, pady=(2, 8))
+        ctk.CTkButton(btn_row, text="+ Клас", width=84,
+                      command=self._add_class).pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="− Клас", width=84, fg_color="gray30",
+                      command=self._remove_class).pack(side="left", padx=4)
+        ctk.CTkButton(btn_row, text="Застосувати", width=130,
+                      command=self._apply_classes).pack(side="left", padx=16)
+        self._apply_lbl = ctk.CTkLabel(btn_row, text="", text_color="green",
+                                       font=ctk.CTkFont(size=11))
+        self._apply_lbl.pack(side="left", padx=8)
 
         # ── Крок 1 ──────────────────────────────────────────────────────────
         step1 = ctk.CTkFrame(self)
@@ -38,9 +68,10 @@ class ScreenCollect(ctk.CTkFrame):
             row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(8, 2))
 
         ctk.CTkLabel(step1, text="Клас:").grid(row=1, column=0, padx=10, pady=6, sticky="w")
-        self._class_var = ctk.StringVar(value=CLASSES[0])
-        ctk.CTkOptionMenu(step1, values=CLASSES, variable=self._class_var,
-                          width=240).grid(row=1, column=1, padx=10, pady=6, sticky="w")
+        self._class_var = ctk.StringVar(value=self._classes[0])
+        self._class_selector = ctk.CTkOptionMenu(
+            step1, values=self._classes, variable=self._class_var, width=240)
+        self._class_selector.grid(row=1, column=1, padx=10, pady=6, sticky="w")
 
         ctk.CTkLabel(step1, text="Тривалість (с):").grid(row=1, column=2, padx=(20, 4))
         self._dur = ctk.CTkEntry(step1, width=64)
@@ -60,19 +91,9 @@ class ScreenCollect(ctk.CTkFrame):
         self._collect_btn.grid(row=3, column=0, padx=10, pady=8, sticky="w")
 
         # ── Статус датасету ──────────────────────────────────────────────────
-        ds = ctk.CTkFrame(self)
-        ds.pack(fill="x", padx=28, pady=2)
-        ctk.CTkLabel(ds, text="Датасет:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=10, pady=6)
-        self._ds_labels: dict[str, ctk.CTkLabel] = {}
-        for cls in CLASSES:
-            lbl = ctk.CTkLabel(ds, text=f"{cls}: 0")
-            lbl.pack(side="left", padx=16)
-            self._ds_labels[cls] = lbl
-        ctk.CTkButton(ds, text="Очистити", width=110, fg_color="gray30",
-                      command=self._clear_dataset).pack(side="right", padx=10)
-        ctk.CTkButton(ds, text="📂 Дані", width=90, fg_color="gray30",
-                      command=self._open_data_dir).pack(side="right", padx=4)
+        self._ds_frame = ctk.CTkFrame(self)
+        self._ds_frame.pack(fill="x", padx=28, pady=2)
+        self._rebuild_ds_labels()
 
         # ── Крок 2 ──────────────────────────────────────────────────────────
         step2 = ctk.CTkFrame(self)
@@ -96,6 +117,73 @@ class ScreenCollect(ctk.CTkFrame):
     def on_show(self):
         self._refresh_ds_ui()
         self._refresh_train_btn()
+
+    # ── Редактор класів ───────────────────────────────────────────────────────
+    def _rebuild_class_entries(self):
+        for w in self._entry_grid.winfo_children():
+            w.destroy()
+        self._class_entries.clear()
+        COLS = 4
+        for i, cls in enumerate(self._classes):
+            row, col = divmod(i, COLS)
+            ctk.CTkLabel(self._entry_grid, text=f"{i + 1}.", width=22,
+                         font=ctk.CTkFont(size=11)).grid(
+                row=row, column=col * 2, padx=(8, 2), pady=3, sticky="e")
+            e = ctk.CTkEntry(self._entry_grid, width=155, font=ctk.CTkFont(size=11))
+            e.insert(0, cls)
+            e.grid(row=row, column=col * 2 + 1, padx=(0, 10), pady=3, sticky="w")
+            self._class_entries.append(e)
+
+    def _get_entry_classes(self) -> list[str]:
+        result = []
+        for i, e in enumerate(self._class_entries):
+            name = e.get().strip()
+            result.append(name if name else f"Клас {i + 1}")
+        return result
+
+    def _add_class(self):
+        if len(self._class_entries) >= 10:
+            return
+        classes = self._get_entry_classes()
+        classes.append(f"Клас {len(classes) + 1}")
+        self.app.cfg["classes"] = classes
+        self._rebuild_class_entries()
+
+    def _remove_class(self):
+        if len(self._class_entries) <= 2:
+            return
+        classes = self._get_entry_classes()[:-1]
+        self.app.cfg["classes"] = classes
+        self._rebuild_class_entries()
+
+    def _apply_classes(self):
+        classes = self._get_entry_classes()
+        self.app.cfg["classes"] = classes
+        self.app.save_config()
+        self._class_selector.configure(values=classes)
+        self._class_var.set(classes[0])
+        self._rebuild_ds_labels()
+        self._refresh_ds_ui()
+        self._refresh_train_btn()
+        self._apply_lbl.configure(text="✓ Збережено")
+        self.after(2000, lambda: self._apply_lbl.configure(text=""))
+
+    # ── Датасет (динамічний) ──────────────────────────────────────────────────
+    def _rebuild_ds_labels(self):
+        for w in self._ds_frame.winfo_children():
+            w.destroy()
+        self._ds_labels = {}
+        ctk.CTkLabel(self._ds_frame, text="Датасет:",
+                     font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10, pady=6)
+        for i, cls in enumerate(self._classes):
+            color = class_color(i)
+            lbl = ctk.CTkLabel(self._ds_frame, text=f"{cls}: 0", text_color=color)
+            lbl.pack(side="left", padx=10)
+            self._ds_labels[cls] = lbl
+        ctk.CTkButton(self._ds_frame, text="Очистити", width=110, fg_color="gray30",
+                      command=self._clear_dataset).pack(side="right", padx=10)
+        ctk.CTkButton(self._ds_frame, text="📂 Дані", width=90, fg_color="gray30",
+                      command=self._open_data_dir).pack(side="right", padx=4)
 
     # ── Збір даних ────────────────────────────────────────────────────────────
     def _toggle_collect(self):
@@ -125,13 +213,10 @@ class ScreenCollect(ctk.CTkFrame):
         self._pinger.start()
 
         def task():
-            # Flush stale packets that accumulated in the queue before collection
             q = self.app.serial.queue
-            flushed = 0
             while True:
                 try:
                     q.get_nowait()
-                    flushed += 1
                 except Exception:
                     break
 
@@ -147,7 +232,6 @@ class ScreenCollect(ctk.CTkFrame):
                     try:
                         pkt = self.app.serial.queue.get(timeout=0.5)
                     except Exception:
-                        # Still update UI even when no packets arrive
                         elapsed = time.time() - start
                         self.after(0, self._update_progress,
                                    min(elapsed / duration, 1.0), int(elapsed), duration, count)
@@ -185,8 +269,8 @@ class ScreenCollect(ctk.CTkFrame):
 
     # ── Датасет ───────────────────────────────────────────────────────────────
     def _count_dataset(self) -> dict[str, int]:
-        """Count only packets that have valid CSI data — same filter as training."""
-        counts = {cls: 0 for cls in CLASSES}
+        classes = self._classes
+        counts = {cls: 0 for cls in classes}
         if not os.path.exists(DATASET_PATH):
             return counts
         try:
@@ -205,13 +289,14 @@ class ScreenCollect(ctk.CTkFrame):
 
     def _refresh_ds_ui(self):
         counts = self._count_dataset()
-        for cls, count in counts.items():
-            color = "green" if count >= 1500 else ("orange" if count > 0 else "gray")
-            self._ds_labels[cls].configure(text=f"{cls}: {count}", text_color=color)
+        for cls, lbl in self._ds_labels.items():
+            count = counts.get(cls, 0)
+            suffix = " ✓" if count >= 1500 else ""
+            lbl.configure(text=f"{cls}: {count}{suffix}")
 
     def _refresh_train_btn(self):
         counts = self._count_dataset()
-        ready = all(counts[cls] > 0 for cls in CLASSES)
+        ready = all(counts.get(cls, 0) > 0 for cls in self._classes)
         self._train_btn.configure(state="normal" if ready else "disabled")
 
     def _open_data_dir(self):
@@ -233,16 +318,17 @@ class ScreenCollect(ctk.CTkFrame):
 
         def task():
             try:
-                # Крок 1 — завантаження та валідація
-                packets_by_class: dict[str, list] = {cls: [] for cls in CLASSES}
-                rssi_by_class: dict[str, list] = {cls: [] for cls in CLASSES}
+                classes = self._classes
+
+                packets_by_class: dict[str, list] = {cls: [] for cls in classes}
+                rssi_by_class: dict[str, list]    = {cls: [] for cls in classes}
                 with open(DATASET_PATH, encoding="utf-8") as f:
                     for line in f:
                         try:
                             pkt = json.loads(line)
                             amps = extract_amplitudes(pkt)
                             label = pkt.get("label")
-                            if amps and label in CLASSES:
+                            if amps and label in classes:
                                 packets_by_class[label].append(amps)
                                 rssi_val = pkt.get("rssi")
                                 rssi_by_class[label].append(
@@ -252,57 +338,50 @@ class ScreenCollect(ctk.CTkFrame):
 
                 warnings = []
 
-                # Detect actual subcarrier count and filter for consistency
                 all_lens = [len(a) for cls_amps in packets_by_class.values()
                             for a in cls_amps]
                 if all_lens:
-                    from collections import Counter
-                    actual_n = Counter(all_lens).most_common(1)[0][0]
+                    from collections import Counter as _Counter
+                    actual_n = _Counter(all_lens).most_common(1)[0][0]
                     if actual_n != 114:
                         warnings.append(
                             f"Виявлено {actual_n} субнесучих замість 114 "
                             f"(HT20 канал 20 МГц — це нормально)")
-                    # Keep only packets with the dominant size (filter amps AND rssi together)
-                    for cls in CLASSES:
+                    for cls in classes:
                         filtered = [(a, r) for a, r in
                                     zip(packets_by_class[cls], rssi_by_class[cls])
                                     if len(a) == actual_n]
                         packets_by_class[cls] = [a for a, _ in filtered]
                         rssi_by_class[cls]    = [r for _, r in filtered]
 
-                for cls in CLASSES:
+                for cls in classes:
                     n = len(packets_by_class[cls])
                     if n == 0:
                         raise ValueError(f"Клас «{cls}» — немає даних")
                     if n < 1500:
                         warnings.append(f"«{cls}»: {n} пакетів (рекомендовано ≥ 1500)")
 
-                # Крок 2 — зборка X, y, rssi
                 all_amps, all_labels, all_rssi = [], [], []
-                for cls in CLASSES:
-                    label_idx = CLASSES.index(cls)
+                for i, cls in enumerate(classes):
                     all_amps.extend(packets_by_class[cls])
-                    all_labels.extend([label_idx] * len(packets_by_class[cls]))
+                    all_labels.extend([i] * len(packets_by_class[cls]))
                     all_rssi.extend(rssi_by_class[cls])
 
                 X    = np.array(all_amps,   dtype=np.float32)
                 y    = np.array(all_labels, dtype=np.int32)
                 rssi = np.array(all_rssi,   dtype=np.float32)
 
-                # Крок 3 — блочне розбиття train/test
-                train_idx, test_idx = Classifier.block_split_indices(y)
+                train_idx, test_idx = Classifier.block_split_indices(y, len(classes))
                 X_train, X_test = X[train_idx], X[test_idx]
                 y_train, y_test = y[train_idx], y[test_idx]
                 rssi_train, rssi_test = rssi[train_idx], rssi[test_idx]
 
-                # Кроки 4-5 — StandardScaler + PCA (fit тільки на train!)
                 extractor = FeatureExtractor()
                 X_train_pca = extractor.fit_transform(X_train)
                 X_test_pca  = extractor.transform(X_test)
                 extractor.save()
 
-                # Кроки 6-7 — навчання і оцінка
-                clf = Classifier()
+                clf = Classifier(classes=classes)
                 result = clf.train(X_train_pca, y_train, X_test_pca, y_test)
                 clf.save()
 
@@ -310,9 +389,8 @@ class ScreenCollect(ctk.CTkFrame):
                 result.explained_variance_ratio_ = extractor.explained_variance_ratio_
                 result.warnings = warnings
 
-                # Аналітика зі статті (Tables 1-3)
                 los_ref = compute_los_reference(X_train, y_train, los_label=0)
-                result.class_stats       = compute_class_stats(X, rssi, y, CLASSES, los_ref)
+                result.class_stats    = compute_class_stats(X, rssi, y, classes, los_ref)
                 sep = compute_separability(X, y)
                 result.fisher_ratio      = sep["fisher_ratio"]
                 result.bcv               = sep["bcv"]
@@ -320,7 +398,7 @@ class ScreenCollect(ctk.CTkFrame):
                 result.silhouette        = sep["silhouette"]
                 result.pca2_variance_pct = sep["pca2_variance_pct"]
                 result.rssi_baselines    = train_rssi_baselines(
-                    rssi_train, y_train, rssi_test, y_test, CLASSES)
+                    rssi_train, y_train, rssi_test, y_test, classes)
 
                 self.after(0, self._show_results, result)
             except Exception as e:
@@ -334,23 +412,22 @@ class ScreenCollect(ctk.CTkFrame):
     def _show_results(self, result):
         self._train_status.configure(text="Модель збережена!", text_color="green")
         self._train_btn.configure(state="normal")
+        classes = result.classes
 
         for w in self._results.winfo_children():
             w.destroy()
 
-        # Попередження
         for warn in result.warnings:
             ctk.CTkLabel(self._results, text=f"⚠ {warn}",
                          text_color="orange", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8)
 
-        ev_color = "green" if result.explained_variance_pct >= 93.2 else "white"
         ctk.CTkLabel(self._results,
                      text=(f"Train: {result.train_size}  |  Test: {result.test_size}"
                            f"  |  PCA-10: {result.explained_variance_pct:.1f}%"),
                      text_color="gray", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=(2, 4))
 
-        CW  = 88   # numeric column width
-        CWL = 150  # class name column width
+        CW  = 88
+        CWL = 150
 
         # ── Таблиця 1: статистика сигналу по класах ──────────────────────────
         if result.class_stats:
@@ -428,49 +505,48 @@ class ScreenCollect(ctk.CTkFrame):
                              width=135).grid(row=r, column=c, padx=3, pady=1)
 
         # ── Таблиця 4: F1 по класах ───────────────────────────────────────────
-        SHORT4 = ["LOS", "Меблі", "Двері", "Стіна×1", "Стіна×2"]
+        short = [c[:9] for c in classes]
         ctk.CTkLabel(self._results, text="Таблиця 4: F1-score по класах",
                      font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
         t4 = ctk.CTkFrame(self._results)
         t4.pack(fill="x", padx=4, pady=2)
-        for c, h in enumerate(["Модель"] + SHORT4):
+        for c, h in enumerate(["Модель"] + short):
             ctk.CTkLabel(t4, text=h, font=ctk.CTkFont(weight="bold", size=10),
                          width=90).grid(row=0, column=c, padx=3, pady=2)
         for r, (mname, rep) in enumerate([("kNN", result.knn_report), ("SVM", result.svm_report)], 1):
             ctk.CTkLabel(t4, text=mname, font=ctk.CTkFont(size=10),
                          width=90).grid(row=r, column=0, padx=3, pady=1)
-            for c, cls in enumerate(CLASSES, 1):
+            for c, cls in enumerate(classes, 1):
                 f1 = rep.get(cls, {}).get("f1-score", 0.0)
                 color = "green" if f1 >= 0.75 else ("orange" if f1 >= 0.5 else "red")
                 ctk.CTkLabel(t4, text=f"{f1:.3f}", text_color=color,
                              font=ctk.CTkFont(size=10),
                              width=90).grid(row=r, column=c, padx=3, pady=1)
 
-        # ── Графіки: kNN + SVM confusion matrices + PCA variance ────────────
-        SHORT = ["LOS", "Меблі", "Двері", "Стіна×1", "Стіна×2"]
-        has_pca_ratios = result.explained_variance_ratio_ is not None
-        ncols = 3 if has_pca_ratios else 2
+        # ── Графіки: kNN + SVM confusion matrices + PCA variance ─────────────
+        short_cm = [c[:7] for c in classes]
+        has_pca = result.explained_variance_ratio_ is not None
+        ncols = 3 if has_pca else 2
         fig = Figure(figsize=(4.2 * ncols, 3.2), dpi=80, facecolor="#2b2b2b")
 
         for col, (title, cm) in enumerate([
             ("kNN Confusion Matrix", result.knn_cm),
             ("SVM Confusion Matrix", result.svm_cm),
         ]):
-            ax_cm = fig.add_subplot(1, ncols, col + 1)
-            ax_cm.set_facecolor("#2b2b2b")
-            ax_cm.imshow(cm, interpolation="nearest", cmap="Blues")
-            ax_cm.set_title(title, color="white", fontsize=9)
-            ax_cm.set_xticks(range(len(CLASSES)))
-            ax_cm.set_yticks(range(len(CLASSES)))
-            ax_cm.set_xticklabels(SHORT, rotation=30, ha="right", color="white", fontsize=7)
-            ax_cm.set_yticklabels(SHORT, color="white", fontsize=7)
-            for i in range(len(CLASSES)):
-                for j in range(len(CLASSES)):
-                    val = int(cm[i, j]) if cm is not None else 0
-                    ax_cm.text(j, i, str(val),
-                               ha="center", va="center", color="white", fontsize=8)
+            ax = fig.add_subplot(1, ncols, col + 1)
+            ax.set_facecolor("#2b2b2b")
+            ax.imshow(cm, interpolation="nearest", cmap="Blues")
+            ax.set_title(title, color="white", fontsize=9)
+            ax.set_xticks(range(len(classes)))
+            ax.set_yticks(range(len(classes)))
+            ax.set_xticklabels(short_cm, rotation=30, ha="right", color="white", fontsize=7)
+            ax.set_yticklabels(short_cm, color="white", fontsize=7)
+            for i in range(len(classes)):
+                for j in range(len(classes)):
+                    ax.text(j, i, str(int(cm[i, j])),
+                            ha="center", va="center", color="white", fontsize=8)
 
-        if has_pca_ratios:
+        if has_pca:
             ax_pca = fig.add_subplot(1, ncols, ncols)
             ax_pca.set_facecolor("#2b2b2b")
             ratios = result.explained_variance_ratio_ * 100

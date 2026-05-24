@@ -11,6 +11,13 @@ _DEFAULTS = {
     "esp_ip": "",
     "collect_duration_sec": 60,
     "monitor_block_sec": 30,
+    "classes": [
+        "Пряма видимість",
+        "Меблі",
+        "Міжкімнатні двері",
+        "Одинарна стіна",
+        "Подвійна стіна",
+    ],
 }
 
 class App(ctk.CTk):
