@@ -48,7 +48,7 @@ class App(ctk.CTk):
         return dict(_DEFAULTS)
 
     def save_config(self):
-        with open(CONFIG_PATH, "w") as f:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(self.cfg, f, indent=2, ensure_ascii=False)
 
     def _build_screens(self):
