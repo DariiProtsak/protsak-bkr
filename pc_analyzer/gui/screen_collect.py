@@ -39,8 +39,8 @@ class ScreenCollect(ctk.CTkFrame):
 
         ctk.CTkLabel(step1, text="Клас:").grid(row=1, column=0, padx=10, pady=6, sticky="w")
         self._class_var = ctk.StringVar(value=CLASSES[0])
-        ctk.CTkSegmentedButton(step1, values=CLASSES, variable=self._class_var,
-                               width=320).grid(row=1, column=1, padx=10, pady=6, sticky="w")
+        ctk.CTkOptionMenu(step1, values=CLASSES, variable=self._class_var,
+                          width=240).grid(row=1, column=1, padx=10, pady=6, sticky="w")
 
         ctk.CTkLabel(step1, text="Тривалість (с):").grid(row=1, column=2, padx=(20, 4))
         self._dur = ctk.CTkEntry(step1, width=64)
@@ -349,7 +349,8 @@ class ScreenCollect(ctk.CTkFrame):
                            f"  |  PCA-10: {result.explained_variance_pct:.1f}%"),
                      text_color="gray", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=(2, 4))
 
-        CW = 90  # default column width
+        CW  = 88   # numeric column width
+        CWL = 150  # class name column width
 
         # ── Таблиця 1: статистика сигналу по класах ──────────────────────────
         if result.class_stats:
@@ -357,16 +358,20 @@ class ScreenCollect(ctk.CTkFrame):
                          font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
             t1 = ctk.CTkFrame(self._results)
             t1.pack(fill="x", padx=4, pady=2)
-            for c, h in enumerate(["Клас", "n", "μ_CSI", "σ_CSI", "μ_RSSI", "σ_RSSI", "μ||ΔCSI||"]):
+            for c, (h, w) in enumerate(zip(
+                    ["Клас", "n", "μ_CSI", "σ_CSI", "μ_RSSI", "σ_RSSI", "μ||ΔCSI||"],
+                    [CWL,   60,   CW,      CW,       CW,        CW,        CW])):
                 ctk.CTkLabel(t1, text=h, font=ctk.CTkFont(weight="bold", size=10),
-                             width=CW).grid(row=0, column=c, padx=2, pady=2)
+                             width=w).grid(row=0, column=c, padx=2, pady=2)
             for r, st in enumerate(result.class_stats, 1):
-                for c, val in enumerate([st["cls"], str(st["n"]),
-                                         f"{st['mu_csi']:.2f}", f"{st['sigma_csi']:.2f}",
-                                         f"{st['mu_rssi']:.1f}", f"{st['sigma_rssi']:.2f}",
-                                         f"{st['mu_delta_csi']:.2f}"]):
+                for c, (val, w) in enumerate(zip(
+                        [st["cls"], str(st["n"]),
+                         f"{st['mu_csi']:.2f}", f"{st['sigma_csi']:.2f}",
+                         f"{st['mu_rssi']:.1f}", f"{st['sigma_rssi']:.2f}",
+                         f"{st['mu_delta_csi']:.2f}"],
+                        [CWL, 60, CW, CW, CW, CW, CW])):
                     ctk.CTkLabel(t1, text=val, font=ctk.CTkFont(size=10),
-                                 width=CW).grid(row=r, column=c, padx=2, pady=1)
+                                 width=w).grid(row=r, column=c, padx=2, pady=1)
 
         # ── Таблиця 2: метрики роздільності ──────────────────────────────────
         ctk.CTkLabel(self._results, text="Таблиця 2: Метрики роздільності",
@@ -423,43 +428,50 @@ class ScreenCollect(ctk.CTkFrame):
                              width=135).grid(row=r, column=c, padx=3, pady=1)
 
         # ── Таблиця 4: F1 по класах ───────────────────────────────────────────
+        SHORT4 = ["LOS", "Меблі", "Двері", "Стіна×1", "Стіна×2"]
         ctk.CTkLabel(self._results, text="Таблиця 4: F1-score по класах",
                      font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
         t4 = ctk.CTkFrame(self._results)
         t4.pack(fill="x", padx=4, pady=2)
-        for c, h in enumerate(["Модель"] + CLASSES):
+        for c, h in enumerate(["Модель"] + SHORT4):
             ctk.CTkLabel(t4, text=h, font=ctk.CTkFont(weight="bold", size=10),
-                         width=110).grid(row=0, column=c, padx=3, pady=2)
+                         width=90).grid(row=0, column=c, padx=3, pady=2)
         for r, (mname, rep) in enumerate([("kNN", result.knn_report), ("SVM", result.svm_report)], 1):
             ctk.CTkLabel(t4, text=mname, font=ctk.CTkFont(size=10),
-                         width=110).grid(row=r, column=0, padx=3, pady=1)
+                         width=90).grid(row=r, column=0, padx=3, pady=1)
             for c, cls in enumerate(CLASSES, 1):
                 f1 = rep.get(cls, {}).get("f1-score", 0.0)
                 color = "green" if f1 >= 0.75 else ("orange" if f1 >= 0.5 else "red")
                 ctk.CTkLabel(t4, text=f"{f1:.3f}", text_color=color,
                              font=ctk.CTkFont(size=10),
-                             width=110).grid(row=r, column=c, padx=3, pady=1)
+                             width=90).grid(row=r, column=c, padx=3, pady=1)
 
-        # ── Графіки: SVM confusion matrix + PCA variance ─────────────────────
+        # ── Графіки: kNN + SVM confusion matrices + PCA variance ────────────
+        SHORT = ["LOS", "Меблі", "Двері", "Стіна×1", "Стіна×2"]
         has_pca_ratios = result.explained_variance_ratio_ is not None
-        ncols = 2 if has_pca_ratios else 1
-        fig = Figure(figsize=(8.4 if has_pca_ratios else 4.2, 2.8), dpi=80, facecolor="#2b2b2b")
+        ncols = 3 if has_pca_ratios else 2
+        fig = Figure(figsize=(4.2 * ncols, 3.2), dpi=80, facecolor="#2b2b2b")
 
-        ax_cm = fig.add_subplot(1, ncols, 1)
-        ax_cm.set_facecolor("#2b2b2b")
-        ax_cm.imshow(result.svm_cm, interpolation="nearest", cmap="Blues")
-        ax_cm.set_title("SVM Confusion Matrix", color="white", fontsize=9)
-        ax_cm.set_xticks(range(len(CLASSES)))
-        ax_cm.set_yticks(range(len(CLASSES)))
-        ax_cm.set_xticklabels(CLASSES, rotation=12, color="white", fontsize=8)
-        ax_cm.set_yticklabels(CLASSES, color="white", fontsize=8)
-        for i in range(len(CLASSES)):
-            for j in range(len(CLASSES)):
-                ax_cm.text(j, i, str(result.svm_cm[i, j]),
-                           ha="center", va="center", color="white", fontsize=9)
+        for col, (title, cm) in enumerate([
+            ("kNN Confusion Matrix", result.knn_cm),
+            ("SVM Confusion Matrix", result.svm_cm),
+        ]):
+            ax_cm = fig.add_subplot(1, ncols, col + 1)
+            ax_cm.set_facecolor("#2b2b2b")
+            ax_cm.imshow(cm, interpolation="nearest", cmap="Blues")
+            ax_cm.set_title(title, color="white", fontsize=9)
+            ax_cm.set_xticks(range(len(CLASSES)))
+            ax_cm.set_yticks(range(len(CLASSES)))
+            ax_cm.set_xticklabels(SHORT, rotation=30, ha="right", color="white", fontsize=7)
+            ax_cm.set_yticklabels(SHORT, color="white", fontsize=7)
+            for i in range(len(CLASSES)):
+                for j in range(len(CLASSES)):
+                    val = int(cm[i, j]) if cm is not None else 0
+                    ax_cm.text(j, i, str(val),
+                               ha="center", va="center", color="white", fontsize=8)
 
         if has_pca_ratios:
-            ax_pca = fig.add_subplot(1, 2, 2)
+            ax_pca = fig.add_subplot(1, ncols, ncols)
             ax_pca.set_facecolor("#2b2b2b")
             ratios = result.explained_variance_ratio_ * 100
             ax_pca.bar(range(1, len(ratios) + 1), ratios, color="#4fc3f7")

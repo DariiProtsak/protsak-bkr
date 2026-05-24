@@ -7,7 +7,13 @@ from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from dataclasses import dataclass, field
 
-CLASSES = ["Порожньо", "Стілець", "Людина"]
+CLASSES = [
+    "Пряма видимість",
+    "Меблі",
+    "Міжкімнатні двері",
+    "Одинарна стіна",
+    "Подвійна стіна",
+]
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(_BASE, "model.pkl")
 
@@ -87,7 +93,7 @@ class Classifier:
     def predict(self, X: np.ndarray) -> tuple[str, float]:
         """Majority vote over all rows in X (one block of packets).
         Returns (class_name, mean_confidence_of_winner)."""
-        proba = self.svm.predict_proba(X)          # (N, 3)
+        proba = self.svm.predict_proba(X)          # (N, n_classes)
         votes = self.svm.predict(X)                # (N,)
         final_idx = int(Counter(votes).most_common(1)[0][0])
         mean_conf = float(proba[:, final_idx].mean())

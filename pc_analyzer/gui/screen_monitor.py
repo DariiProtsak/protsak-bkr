@@ -14,7 +14,13 @@ from core.udp_pinger import UdpPinger
 
 _BG   = "#1e1e2e"
 _DARK = "#2b2b2b"
-CLASS_COLORS = {"Порожньо": "#4caf50", "Стілець": "#ffc107", "Людина": "#f44336"}
+CLASS_COLORS = {
+    "Пряма видимість":   "#4caf50",
+    "Меблі":             "#ffc107",
+    "Міжкімнатні двері": "#29b6f6",
+    "Одинарна стіна":    "#f44336",
+    "Подвійна стіна":    "#ab47bc",
+}
 
 class ScreenMonitor(ctk.CTkFrame):
     def __init__(self, app):
