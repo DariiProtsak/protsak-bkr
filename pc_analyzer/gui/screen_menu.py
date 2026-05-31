@@ -30,6 +30,7 @@ class ScreenMenu(ctk.CTkFrame):
         self._status.configure(text=info)
         state = "normal" if Classifier.model_exists() else "disabled"
         self._monitor_btn.configure(state=state)
+        self.app.serial.lcd("BKR v2.3", "Ready")
 
     def _change_wifi(self):
         self.app.serial.stop()

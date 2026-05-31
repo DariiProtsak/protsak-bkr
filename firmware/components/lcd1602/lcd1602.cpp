@@ -98,6 +98,19 @@ void LCD1602::setCursor(uint8_t col, uint8_t row)
     ets_delay_us(50);
 }
 
+void LCD1602::createChar(uint8_t location, const uint8_t *pattern)
+{
+    location &= 0x07;
+    sendByte(0x40 | (location << 3), false);
+    ets_delay_us(50);
+    for (int i = 0; i < 8; i++) {
+        sendByte(pattern[i] & 0x1F, true);
+        ets_delay_us(50);
+    }
+    sendByte(LCD_CMD_DDRAM, false);  // повернутись до DDRAM після запису CGRAM
+    ets_delay_us(50);
+}
+
 void LCD1602::print(uint8_t col, uint8_t row, const char *text)
 {
     setCursor(col, row);

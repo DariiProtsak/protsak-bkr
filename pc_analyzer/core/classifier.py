@@ -43,11 +43,14 @@ class TrainingResult:
     pca2_variance_pct: float = 0.0
     class_stats: list = field(default_factory=list)
     rssi_baselines: dict = field(default_factory=dict)
+    class_mean_profiles: list = field(default_factory=list)  # shape (n_classes, K) — для Рис. 4
+    best_model: str = "svm"
 
 
 class Classifier:
     def __init__(self, classes: list[str] | None = None):
         self.classes: list[str] = list(classes) if classes else []
+        self.best: str = "svm"
         self.knn = KNeighborsClassifier(n_neighbors=5, metric="euclidean")
         self.svm = SVC(kernel="rbf", C=1.0, gamma="scale", probability=True)
 
@@ -89,20 +92,24 @@ class Classifier:
         return result
 
     def predict(self, X: np.ndarray) -> tuple[str, float]:
-        proba = self.svm.predict_proba(X)
-        votes = self.svm.predict(X)
+        model = self.svm if self.best == "svm" else self.knn
+        proba = model.predict_proba(X)
+        votes = model.predict(X)
         final_idx = int(Counter(votes).most_common(1)[0][0])
         mean_conf = float(proba[:, final_idx].mean())
         return self.classes[final_idx], mean_conf
 
-    def save(self):
-        joblib.dump({"knn": self.knn, "svm": self.svm, "classes": self.classes}, MODEL_PATH)
+    def save(self, best: str = "svm"):
+        self.best = best
+        joblib.dump({"knn": self.knn, "svm": self.svm,
+                     "classes": self.classes, "best": best}, MODEL_PATH)
 
     def load(self):
         data = joblib.load(MODEL_PATH)
-        self.knn    = data["knn"]
-        self.svm    = data["svm"]
+        self.knn     = data["knn"]
+        self.svm     = data["svm"]
         self.classes = data.get("classes", [])
+        self.best    = data.get("best", "svm")
 
     @staticmethod
     def model_exists() -> bool:

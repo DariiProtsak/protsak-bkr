@@ -51,6 +51,7 @@ static volatile bool csi_enabled       = false;
 static volatile bool     g_ctrl_disconnect = false;
 static volatile uint32_t g_csi_count       = 0;
 static volatile bool     wifi_ready        = false;   // set after esp_wifi_start()
+static volatile bool     g_lcd_pc_ctrl     = false;   // true = PC owns LCD, rssi_monitor backs off
 
 
 // ── CSI callback — runs in WiFi task context, must be fast ───────────────────
@@ -136,10 +137,11 @@ static void rssi_monitor_task(void *pv)
         uint32_t cur   = g_csi_count;
         uint32_t rate  = (cur - last) * 2;   // packets per second (500 ms interval)
         last           = cur;
+        ESP_LOGI(TAG, "CSI %lu pkt/s | RSSI %d dBm", (unsigned long)rate, (int)ap.rssi);
+        if (g_lcd_pc_ctrl) continue;  // PC controls LCD — don't overwrite
         snprintf(lcd_line2, sizeof(lcd_line2), "%-4ddBm  %3lu pkt/s",
                  (int)ap.rssi, (unsigned long)rate);
         lcd_needs_update = true;
-        ESP_LOGI(TAG, "CSI %lu pkt/s | RSSI %d dBm", (unsigned long)rate, (int)ap.rssi);
     }
 }
 
@@ -255,7 +257,17 @@ static void uart_cmd_task(void *pv)
             line[pos] = '\0';
             pos = 0;
 
-            if (strncmp(line, "WIFI_CONNECT:", 13) == 0) {
+            if (strncmp(line, "LCD:", 4) == 0) {
+                char *rest = line + 4;
+                char *sep  = strchr(rest, ':');
+                if (sep != NULL) {
+                    *sep = '\0';
+                    snprintf(lcd_line1, sizeof(lcd_line1), "%-16.16s", rest);
+                    snprintf(lcd_line2, sizeof(lcd_line2), "%-16.16s", sep + 1);
+                    lcd_needs_update = true;
+                    g_lcd_pc_ctrl = (strcmp(rest, "BKR v2.3") != 0);
+                }
+            } else if (strncmp(line, "WIFI_CONNECT:", 13) == 0) {
                 if (!wifi_ready) { UART_REPLY("WIFI_FAIL"); continue; }
                 char *rest  = line + 13;
                 char *colon = strchr(rest, ':');
@@ -351,6 +363,22 @@ extern "C" void app_main(void)
 
     static LCD1602 lcd(I2C_SDA_PIN, I2C_SCL_PIN, LCD_I2C_ADDR);
     lcd.init();
+
+    // CGRAM[0..7]: унікальні українські букви яких немає в Latin
+    // Код 0x08 = CGRAM[0] (уникаємо 0x00 — нуль-термінатор рядка)
+    // Коди 0x01..0x07 = CGRAM[1..7]
+    static const uint8_t CGRAM[8][8] = {
+        {0x10, 0x10, 0x1E, 0x11, 0x11, 0x1E, 0x00, 0x00}, // [0] 0x08 = ь
+        {0x1F, 0x11, 0x11, 0x11, 0x11, 0x11, 0x00, 0x00}, // [1] 0x01 = П
+        {0x0F, 0x05, 0x05, 0x05, 0x05, 0x15, 0x00, 0x00}, // [2] 0x02 = Л
+        {0x11, 0x11, 0x13, 0x15, 0x19, 0x11, 0x00, 0x00}, // [3] 0x03 = и
+        {0x0F, 0x11, 0x11, 0x0F, 0x05, 0x09, 0x11, 0x00}, // [4] 0x04 = я
+        {0x12, 0x15, 0x11, 0x11, 0x15, 0x12, 0x00, 0x00}, // [5] 0x05 = ю
+        {0x0E, 0x0A, 0x0A, 0x0A, 0x1F, 0x11, 0x00, 0x00}, // [6] 0x06 = д
+        {0x11, 0x11, 0x11, 0x11, 0x1F, 0x01, 0x00, 0x00}, // [7] 0x07 = ц
+    };
+    for (int i = 0; i < 8; i++) lcd.createChar(i, CGRAM[i]);
+
     lcd.clear();
     lcd.print(0, 0, "BKR v2.3");
     lcd.print(0, 1, "WiFi init...");

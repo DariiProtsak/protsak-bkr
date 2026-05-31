@@ -204,10 +204,13 @@ class ScreenCollect(ctk.CTkFrame):
         self.app.save_config()
 
         self._collecting = True
+        self._collect_label = label
         self._collect_btn.configure(text="■  Стоп")
         self._progress.set(0)
         self._timer.configure(text=f"0 / {duration} сек")
         self._counter.configure(text="0 пакетів")
+        _n = self._classes.index(label) + 1 if label in self._classes else 1
+        self.app.serial.lcd("Collecting...", f"Scen.{_n} 0 pkt")
 
         self._pinger = UdpPinger(rate=500.0, target_ip=self.app.serial.esp32_ip)
         self._pinger.start()
@@ -253,6 +256,9 @@ class ScreenCollect(ctk.CTkFrame):
         self._progress.set(pct)
         self._timer.configure(text=f"{elapsed_sec} / {duration} сек")
         self._counter.configure(text=f"{count} пакетів")
+        label = getattr(self, "_collect_label", "")
+        _n = self._classes.index(label) + 1 if label in self._classes else 1
+        self.app.serial.lcd("Collecting...", f"Scen.{_n} {count} pkt")
 
     def _stop_pinger(self):
         if self._pinger:
@@ -291,8 +297,9 @@ class ScreenCollect(ctk.CTkFrame):
         counts = self._count_dataset()
         for cls, lbl in self._ds_labels.items():
             count = counts.get(cls, 0)
+            iters = count // 1500
             suffix = " ✓" if count >= 1500 else ""
-            lbl.configure(text=f"{cls}: {count}{suffix}")
+            lbl.configure(text=f"{cls}: {count} ({iters} іт.){suffix}")
 
     def _refresh_train_btn(self):
         counts = self._count_dataset()
@@ -315,6 +322,8 @@ class ScreenCollect(ctk.CTkFrame):
         self._train_btn.configure(state="disabled")
         self._train_status.configure(text="Тренування…", text_color="gray")
         self.update()
+
+        self.app.serial.lcd("Training...", "Please wait")
 
         def task():
             try:
@@ -383,7 +392,14 @@ class ScreenCollect(ctk.CTkFrame):
 
                 clf = Classifier(classes=classes)
                 result = clf.train(X_train_pca, y_train, X_test_pca, y_test)
-                clf.save()
+                knn_f1 = result.knn_report.get("macro avg", {}).get("f1-score", 0.0)
+                svm_f1 = result.svm_report.get("macro avg", {}).get("f1-score", 0.0)
+                best_model = "svm" if svm_f1 >= knn_f1 else "knn"
+                result.best_model = best_model
+                clf.save(best=best_model)
+                best_f1_val = svm_f1 if best_model == "svm" else knn_f1
+                best_lbl    = "SVM" if best_model == "svm" else "kNN"
+                self.app.serial.lcd(f"{best_lbl} F1={best_f1_val:.3f}", "Model saved!")
 
                 result.explained_variance_pct    = extractor.explained_variance_pct
                 result.explained_variance_ratio_ = extractor.explained_variance_ratio_
@@ -399,6 +415,19 @@ class ScreenCollect(ctk.CTkFrame):
                 result.pca2_variance_pct = sep["pca2_variance_pct"]
                 result.rssi_baselines    = train_rssi_baselines(
                     rssi_train, y_train, rssi_test, y_test, classes)
+
+                # Середній профіль амплітуд по субнесучих для кожного класу (Рис. 4)
+                profiles = []
+                for i in range(len(classes)):
+                    mask = y == i
+                    profiles.append(X[mask].mean(axis=0) if mask.any() else np.zeros(X.shape[1]))
+                result.class_mean_profiles = profiles
+
+                # Зберегти LOS профіль для екрану моніторингу
+                import numpy as _np_save
+                los_save_path = os.path.join(_BASE, "data", "los_profile.npy")
+                os.makedirs(os.path.dirname(los_save_path), exist_ok=True)
+                _np_save.save(los_save_path, los_ref)
 
                 self.after(0, self._show_results, result)
             except Exception as e:
@@ -431,7 +460,7 @@ class ScreenCollect(ctk.CTkFrame):
 
         # ── Таблиця 1: статистика сигналу по класах ──────────────────────────
         if result.class_stats:
-            ctk.CTkLabel(self._results, text="Таблиця 1: Статистика сигналу по класах",
+            ctk.CTkLabel(self._results, text="Статистика сигналу по класах",
                          font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
             t1 = ctk.CTkFrame(self._results)
             t1.pack(fill="x", padx=4, pady=2)
@@ -451,7 +480,7 @@ class ScreenCollect(ctk.CTkFrame):
                                  width=w).grid(row=r, column=c, padx=2, pady=1)
 
         # ── Таблиця 2: метрики роздільності ──────────────────────────────────
-        ctk.CTkLabel(self._results, text="Таблиця 2: Метрики роздільності",
+        ctk.CTkLabel(self._results, text="Метрики роздільності",
                      font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
         t2 = ctk.CTkFrame(self._results)
         t2.pack(fill="x", padx=4, pady=2)
@@ -470,7 +499,7 @@ class ScreenCollect(ctk.CTkFrame):
                          width=100).grid(row=2, column=c, padx=3, pady=0)
 
         # ── Таблиця 3: порівняння класифікаторів ─────────────────────────────
-        ctk.CTkLabel(self._results, text="Таблиця 3: Порівняння класифікаторів",
+        ctk.CTkLabel(self._results, text="Порівняння класифікаторів",
                      font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
         t3 = ctk.CTkFrame(self._results)
         t3.pack(fill="x", padx=4, pady=2)
@@ -504,9 +533,17 @@ class ScreenCollect(ctk.CTkFrame):
                              font=ctk.CTkFont(size=10, weight=wt),
                              width=135).grid(row=r, column=c, padx=3, pady=1)
 
+        best_f1  = result.svm_report if result.best_model == "svm" else result.knn_report
+        best_f1v = best_f1.get("macro avg", {}).get("f1-score", 0.0)
+        best_lbl = "SVM RBF" if result.best_model == "svm" else "kNN"
+        ctk.CTkLabel(self._results,
+                     text=f"Для моніторингу обрано: {best_lbl}  F1={best_f1v:.3f}",
+                     text_color="green", font=ctk.CTkFont(size=11)).pack(
+                         anchor="w", padx=8, pady=(3, 6))
+
         # ── Таблиця 4: F1 по класах ───────────────────────────────────────────
         short = [c[:9] for c in classes]
-        ctk.CTkLabel(self._results, text="Таблиця 4: F1-score по класах",
+        ctk.CTkLabel(self._results, text="F1-score по класах",
                      font=ctk.CTkFont(weight="bold", size=11)).pack(anchor="w", padx=8, pady=(6, 1))
         t4 = ctk.CTkFrame(self._results)
         t4.pack(fill="x", padx=4, pady=2)
@@ -523,40 +560,214 @@ class ScreenCollect(ctk.CTkFrame):
                              font=ctk.CTkFont(size=10),
                              width=90).grid(row=r, column=c, padx=3, pady=1)
 
-        # ── Графіки: kNN + SVM confusion matrices + PCA variance ─────────────
+        # ── Графіки ─────────────────────────────────────────────────────────────
         short_cm = [c[:7] for c in classes]
-        has_pca = result.explained_variance_ratio_ is not None
-        ncols = 3 if has_pca else 2
-        fig = Figure(figsize=(4.2 * ncols, 3.2), dpi=80, facecolor="#2b2b2b")
+        has_pca  = result.explained_variance_ratio_ is not None
+        BG = "#2b2b2b"
 
+        def _style_ax(ax):
+            ax.set_facecolor(BG)
+            ax.tick_params(colors="white", labelsize=7)
+            for sp in ax.spines.values():
+                sp.set_edgecolor("#555")
+
+        figs_to_save = []
+
+        # ── Рис. 4: Усереднені профілі амплітуд субнесучих CSI ──────────────
+        if result.class_mean_profiles:
+            fig4 = Figure(figsize=(8.0, 2.8), dpi=80, facecolor=BG)
+            ax4  = fig4.add_subplot(1, 1, 1)
+            _style_ax(ax4)
+            for i, (cls, profile) in enumerate(zip(classes, result.class_mean_profiles)):
+                ax4.plot(range(1, len(profile) + 1), profile,
+                         label=cls[:12], color=class_color(i), linewidth=1.2)
+            ax4.set_title("Усереднені профілі амплітуд субнесучих CSI",
+                          color="white", fontsize=9)
+            ax4.set_xlabel("Субнесуча #", color="gray", fontsize=8)
+            ax4.set_ylabel("Амплітуда (у.о.)", color="gray", fontsize=8)
+            ax4.legend(fontsize=7, facecolor="#333", labelcolor="white",
+                       loc="upper right", framealpha=0.7)
+            fig4.tight_layout()
+            figs_to_save.append(fig4)
+            FigureCanvasTkAgg(fig4, master=self._results).get_tk_widget().pack(pady=4)
+
+        # ── Рис. 5: μ ± σ для RSSI та CSI ──────────────────────────────────
+        if result.class_stats:
+            fig5 = Figure(figsize=(8.0, 2.8), dpi=80, facecolor=BG)
+            cls_names  = [s["cls"][:9] for s in result.class_stats]
+            colors     = [class_color(i) for i in range(len(result.class_stats))]
+            x          = range(len(result.class_stats))
+
+            ax5l = fig5.add_subplot(1, 2, 1)
+            _style_ax(ax5l)
+            mu_r  = [s["mu_rssi"]   for s in result.class_stats]
+            sig_r = [s["sigma_rssi"] for s in result.class_stats]
+            ax5l.bar(x, mu_r, color=colors, alpha=0.8)
+            ax5l.errorbar(x, mu_r, yerr=sig_r, fmt="none",
+                          color="white", capsize=4, linewidth=1.2)
+            ax5l.set_title("RSSI  μ ± σ", color="white", fontsize=9)
+            ax5l.set_xticks(x); ax5l.set_xticklabels(cls_names, rotation=25, ha="right")
+            ax5l.set_ylabel("дБм", color="gray", fontsize=8)
+
+            ax5r = fig5.add_subplot(1, 2, 2)
+            _style_ax(ax5r)
+            mu_c  = [s["mu_csi"]   for s in result.class_stats]
+            sig_c = [s["sigma_csi"] for s in result.class_stats]
+            ax5r.bar(x, mu_c, color=colors, alpha=0.8)
+            ax5r.errorbar(x, mu_c, yerr=sig_c, fmt="none",
+                          color="white", capsize=4, linewidth=1.2)
+            ax5r.set_title("CSI  μ ± σ", color="white", fontsize=9)
+            ax5r.set_xticks(x); ax5r.set_xticklabels(cls_names, rotation=25, ha="right")
+            ax5r.set_ylabel("у.о.", color="gray", fontsize=8)
+
+            fig5.suptitle("Середні значення метрик сигналу (μ ± σ)",
+                          color="white", fontsize=9)
+            fig5.tight_layout()
+            figs_to_save.append(fig5)
+            FigureCanvasTkAgg(fig5, master=self._results).get_tk_widget().pack(pady=4)
+
+        # ── Рис. 6: Роздільність класів (WCV + класові середні CSI) ─────────
+        if result.class_stats:
+            fig6 = Figure(figsize=(8.0, 2.8), dpi=80, facecolor=BG)
+            cls_names = [s["cls"][:9] for s in result.class_stats]
+            x         = range(len(result.class_stats))
+            colors    = [class_color(i) for i in range(len(result.class_stats))]
+
+            ax6l = fig6.add_subplot(1, 2, 1)
+            _style_ax(ax6l)
+            wcv_per_class = [s["sigma_csi"] ** 2 for s in result.class_stats]
+            ax6l.bar(x, wcv_per_class, color=colors, alpha=0.8)
+            ax6l.set_title("Внутрішньокласова дисперсія WCV", color="white", fontsize=9)
+            ax6l.set_xticks(x); ax6l.set_xticklabels(cls_names, rotation=25, ha="right")
+            ax6l.set_ylabel("σ² (у.о.²)", color="gray", fontsize=8)
+
+            ax6r = fig6.add_subplot(1, 2, 2)
+            _style_ax(ax6r)
+            mu_c = [s["mu_csi"] for s in result.class_stats]
+            bars = ax6r.bar(x, mu_c, color=colors, alpha=0.8)
+            ax6r.set_title(
+                f"Класові середні μ_CSI  (Fisher B/W = {result.fisher_ratio:.2f})",
+                color="white", fontsize=9)
+            ax6r.set_xticks(x); ax6r.set_xticklabels(cls_names, rotation=25, ha="right")
+            ax6r.set_ylabel("μ_CSI (у.о.)", color="gray", fontsize=8)
+            for bar, val in zip(bars, mu_c):
+                ax6r.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+                          f"{val:.3f}", ha="center", va="bottom",
+                          color="white", fontsize=7)
+
+            fig6.suptitle("Показники роздільності класів у просторі ознак CSI",
+                          color="white", fontsize=9)
+            fig6.tight_layout()
+            figs_to_save.append(fig6)
+            FigureCanvasTkAgg(fig6, master=self._results).get_tk_widget().pack(pady=4)
+
+        # ── Рис. 7: Порівняння метрик класифікаторів ────────────────────────
+        fig7 = Figure(figsize=(8.0, 2.8), dpi=80, facecolor=BG)
+        ax7  = fig7.add_subplot(1, 1, 1)
+        _style_ax(ax7)
+
+        metrics   = ["Accuracy", "Precision", "Recall", "F1-score"]
+        knn_macro = result.knn_report.get("macro avg", {})
+        svm_macro = result.svm_report.get("macro avg", {})
+        knn_vals  = [result.knn_accuracy,
+                     knn_macro.get("precision", 0),
+                     knn_macro.get("recall",    0),
+                     knn_macro.get("f1-score",  0)]
+        svm_vals  = [result.svm_accuracy,
+                     svm_macro.get("precision", 0),
+                     svm_macro.get("recall",    0),
+                     svm_macro.get("f1-score",  0)]
+
+        import numpy as _np
+        xpos   = _np.arange(len(metrics))
+        width  = 0.32
+        bars_k = ax7.bar(xpos - width / 2, knn_vals, width, label="kNN",
+                         color="#4fc3f7", alpha=0.85)
+        bars_s = ax7.bar(xpos + width / 2, svm_vals, width, label="SVM (RBF)",
+                         color="#f48fb1", alpha=0.85)
+        ax7.set_xticks(xpos); ax7.set_xticklabels(metrics)
+        ax7.set_ylim(0, 1.12)
+        ax7.set_ylabel("Значення", color="gray", fontsize=8)
+        ax7.set_title("Порівняння метрик класифікаторів kNN та SVM",
+                      color="white", fontsize=9)
+        ax7.legend(fontsize=8, facecolor="#333", labelcolor="white")
+        ax7.axhline(0.75, color="lime", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax7.text(3.52, 0.76, "F1=0.75", color="lime", fontsize=7)
+        for bars in (bars_k, bars_s):
+            for bar in bars:
+                ax7.text(bar.get_x() + bar.get_width() / 2,
+                         bar.get_height() + 0.01,
+                         f"{bar.get_height():.3f}",
+                         ha="center", va="bottom", color="white", fontsize=7)
+        fig7.tight_layout()
+        figs_to_save.append(fig7)
+        FigureCanvasTkAgg(fig7, master=self._results).get_tk_widget().pack(pady=4)
+
+        # ── Рис. 8: Матриці похибок + PCA дисперсія ─────────────────────────
+        ncols = 3 if has_pca else 2
+        fig8  = Figure(figsize=(4.2 * ncols, 3.2), dpi=80, facecolor=BG)
         for col, (title, cm) in enumerate([
-            ("kNN Confusion Matrix", result.knn_cm),
-            ("SVM Confusion Matrix", result.svm_cm),
-        ]):
-            ax = fig.add_subplot(1, ncols, col + 1)
-            ax.set_facecolor("#2b2b2b")
+                ("kNN — Матриця похибок", result.knn_cm),
+                ("SVM — Матриця похибок", result.svm_cm)]):
+            ax = fig8.add_subplot(1, ncols, col + 1)
+            _style_ax(ax)
             ax.imshow(cm, interpolation="nearest", cmap="Blues")
             ax.set_title(title, color="white", fontsize=9)
-            ax.set_xticks(range(len(classes)))
-            ax.set_yticks(range(len(classes)))
-            ax.set_xticklabels(short_cm, rotation=30, ha="right", color="white", fontsize=7)
-            ax.set_yticklabels(short_cm, color="white", fontsize=7)
+            ax.set_xticks(range(len(classes))); ax.set_yticks(range(len(classes)))
+            ax.set_xticklabels(short_cm, rotation=30, ha="right", fontsize=7)
+            ax.set_yticklabels(short_cm, fontsize=7)
             for i in range(len(classes)):
                 for j in range(len(classes)):
                     ax.text(j, i, str(int(cm[i, j])),
                             ha="center", va="center", color="white", fontsize=8)
-
         if has_pca:
-            ax_pca = fig.add_subplot(1, ncols, ncols)
-            ax_pca.set_facecolor("#2b2b2b")
+            ax_pca = fig8.add_subplot(1, ncols, ncols)
+            _style_ax(ax_pca)
             ratios = result.explained_variance_ratio_ * 100
             ax_pca.bar(range(1, len(ratios) + 1), ratios, color="#4fc3f7")
             ax_pca.set_title("PCA: дисперсія по компонентах", color="white", fontsize=9)
             ax_pca.set_xlabel("Компонента", color="gray", fontsize=8)
             ax_pca.set_ylabel("%", color="gray", fontsize=8)
-            ax_pca.tick_params(colors="white")
-            for spine in ax_pca.spines.values():
-                spine.set_edgecolor("#444")
+        fig8.tight_layout()
+        figs_to_save.append(fig8)
+        FigureCanvasTkAgg(fig8, master=self._results).get_tk_widget().pack(pady=4)
 
-        fig.tight_layout()
-        FigureCanvasTkAgg(fig, master=self._results).get_tk_widget().pack(pady=4)
+        # ── Рис. 9: Теплова карта F1-score по класах ────────────────────────
+        fig9 = Figure(figsize=(8.0, 2.2), dpi=80, facecolor=BG)
+        ax9  = fig9.add_subplot(1, 1, 1)
+        _style_ax(ax9)
+
+        f1_matrix = []
+        for rep in (result.knn_report, result.svm_report):
+            row = [rep.get(cls, {}).get("f1-score", 0.0) for cls in classes]
+            f1_matrix.append(row)
+        f1_matrix = _np.array(f1_matrix)
+
+        im = ax9.imshow(f1_matrix, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
+        ax9.set_xticks(range(len(classes)))
+        ax9.set_xticklabels([c[:10] for c in classes], rotation=25, ha="right", fontsize=8)
+        ax9.set_yticks([0, 1]); ax9.set_yticklabels(["kNN", "SVM"], fontsize=9)
+        ax9.set_title("F1-score по класах для kNN та SVM",
+                      color="white", fontsize=9)
+        for i in range(2):
+            for j in range(len(classes)):
+                val = f1_matrix[i, j]
+                ax9.text(j, i, f"{val:.2f}", ha="center", va="center",
+                         color="black" if val > 0.5 else "white", fontsize=9, fontweight="bold")
+        fig9.colorbar(im, ax=ax9, fraction=0.03, pad=0.04)
+        fig9.tight_layout()
+        figs_to_save.append(fig9)
+        FigureCanvasTkAgg(fig9, master=self._results).get_tk_widget().pack(pady=4)
+
+        # ── Кнопка збереження графіків ───────────────────────────────────────
+        def _save_plots(figs=figs_to_save):
+            plots_dir = os.path.join(_BASE, "data", "plots")
+            os.makedirs(plots_dir, exist_ok=True)
+            for idx, fig in enumerate(figs, 4):
+                fig.savefig(os.path.join(plots_dir, f"fig{idx}.png"),
+                            dpi=150, bbox_inches="tight",
+                            facecolor=fig.get_facecolor())
+            subprocess.Popen(["explorer", plots_dir])
+
+        ctk.CTkButton(self._results, text="Зберегти графіки (data/plots/)",
+                      width=280, command=_save_plots).pack(pady=8)

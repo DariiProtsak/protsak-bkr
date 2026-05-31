@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 import numpy as np
@@ -24,6 +25,9 @@ class ScreenMonitor(ctk.CTkFrame):
         self._extractor = FeatureExtractor()
         self._clf = Classifier()
         self._pinger: UdpPinger | None = None
+        self._demo_win: ctk.CTkToplevel | None = None
+        self._demo_cls_lbl: ctk.CTkLabel | None = None
+        self._demo_prob_lbl: ctk.CTkLabel | None = None
         self._build()
 
     @property
@@ -47,6 +51,9 @@ class ScreenMonitor(ctk.CTkFrame):
         self._result_lbl = ctk.CTkLabel(bar, text="",
                                         font=ctk.CTkFont(size=16, weight="bold"), width=220)
         self._result_lbl.pack(side="left", padx=10)
+        ctk.CTkButton(bar, text="⛶ Демо", width=100,
+                      fg_color="transparent", border_width=1,
+                      command=self._open_demo).pack(side="right", padx=4)
         ctk.CTkButton(bar, text="← Меню", width=100,
                       fg_color="transparent", border_width=1,
                       command=self._back).pack(side="right", padx=12)
@@ -65,13 +72,45 @@ class ScreenMonitor(ctk.CTkFrame):
 
         self._draw_empty()
 
+    def _open_demo(self):
+        if self._demo_win is not None and self._demo_win.winfo_exists():
+            self._demo_win.lift()
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Демо")
+        win.state("zoomed")
+
+        def _on_close():
+            self._demo_win = None
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        win.bind("<Escape>", lambda e: _on_close())
+
+        center = ctk.CTkFrame(win, fg_color="transparent")
+        center.place(relx=0.5, rely=0.5, anchor="center")
+
+        self._demo_cls_lbl = ctk.CTkLabel(
+            center, text="—",
+            font=ctk.CTkFont(size=72, weight="bold"),
+            fg_color="transparent", text_color="white")
+        self._demo_cls_lbl.pack()
+
+        self._demo_prob_lbl = ctk.CTkLabel(
+            center, text="",
+            font=ctk.CTkFont(size=36),
+            fg_color="transparent", text_color="white")
+        self._demo_prob_lbl.pack(pady=(12, 0))
+
+        self._demo_win = win
+
     def _draw_empty(self):
         for ax in (self._ax_amp, self._ax_time):
             ax.set_facecolor(_BG)
             ax.tick_params(colors="white")
             for spine in ax.spines.values():
                 spine.set_edgecolor("#444")
-        self._ax_amp.set_title("Амплітуди субнесучих", color="white", fontsize=9)
+        self._ax_amp.set_title("Амплітуди субнесучих  (сірий = LOS еталон)", color="white", fontsize=9)
         self._ax_amp.set_xlabel("Субнесуча #", color="gray", fontsize=8)
         self._ax_amp.set_ylabel("Амплітуда", color="gray", fontsize=8)
         self._ax_time.set_title("Часова шкала класів", color="white", fontsize=9)
@@ -86,6 +125,14 @@ class ScreenMonitor(ctk.CTkFrame):
     def on_show(self):
         self._block.delete(0, "end")
         self._block.insert(0, str(self.app.cfg.get("monitor_block_sec", 30)))
+        self._los_profile = None
+        los_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "data", "los_profile.npy")
+        if os.path.exists(los_path):
+            try:
+                self._los_profile = np.load(los_path)
+            except Exception:
+                pass
 
     def _stop_pinger(self):
         if self._pinger:
@@ -213,6 +260,23 @@ class ScreenMonitor(ctk.CTkFrame):
         color = self._class_colors.get(cls, "white")
         self._result_lbl.configure(text=f"{cls}  {prob:.0%}", text_color=color)
 
+        if self._demo_win is not None:
+            if not self._demo_win.winfo_exists():
+                self._demo_win = None
+            else:
+                idx = self._clf.classes.index(cls) if cls in self._clf.classes else 0
+                self._demo_win.configure(fg_color=class_color(idx))
+                self._demo_cls_lbl.configure(text=cls)
+                self._demo_prob_lbl.configure(text=f"{prob:.0%}")
+
+        model_name = "SVM" if self._clf.best == "svm" else "kNN"
+        _n = self._clf.classes.index(cls) + 1 if cls in self._clf.classes else 0
+        self.app.serial.lcd(f"Scenario {_n}", f"{model_name} {prob:.0%}")
+
+        if self._los_profile is not None and len(amplitudes) == len(self._los_profile):
+            delta = float(np.sqrt(np.sum((amplitudes - self._los_profile) ** 2)))
+            self._stats_lbl.configure(text=f"μ||ΔCSI|| = {delta:.3f}", text_color="cyan")
+
         # Амплітуди
         self._ax_amp.cla()
         self._ax_amp.set_facecolor(_BG)
@@ -220,7 +284,12 @@ class ScreenMonitor(ctk.CTkFrame):
         for spine in self._ax_amp.spines.values():
             spine.set_edgecolor("#444")
         self._ax_amp.plot(amplitudes, color="#4fc3f7", linewidth=0.9)
-        self._ax_amp.set_title("Амплітуди субнесучих", color="white", fontsize=9)
+        if self._los_profile is not None:
+            self._ax_amp.plot(range(1, len(self._los_profile) + 1),
+                              self._los_profile,
+                              color="#888", linewidth=1, linestyle="--",
+                              label="LOS еталон", alpha=0.6)
+        self._ax_amp.set_title("Амплітуди субнесучих  (сірий = LOS еталон)", color="white", fontsize=9)
         self._ax_amp.set_xlabel("Субнесуча #", color="gray", fontsize=8)
         self._ax_amp.set_ylabel("Амплітуда", color="gray", fontsize=8)
 

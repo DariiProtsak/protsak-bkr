@@ -10,6 +10,7 @@ public:
     void init();
     void clear();
     void print(uint8_t col, uint8_t row, const char *text);
+    void createChar(uint8_t location, const uint8_t *pattern);
     void setCursor(uint8_t col, uint8_t row);
     void backlight(bool on);
 

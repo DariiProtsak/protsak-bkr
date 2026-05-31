@@ -13,10 +13,8 @@ _DEFAULTS = {
     "monitor_block_sec": 30,
     "classes": [
         "Пряма видимість",
-        "Меблі",
-        "Міжкімнатні двері",
-        "Одинарна стіна",
-        "Подвійна стіна",
+        "Стілець",
+        "Людина",
     ],
 }
 
@@ -27,7 +25,8 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
         self.title("CSI Analyzer")
         self.geometry("900x650")
-        self.resizable(False, False)
+        self.resizable(True, True)
+        self.minsize(900, 650)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.cfg = self._load_config()
