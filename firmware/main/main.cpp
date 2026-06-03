@@ -14,7 +14,7 @@
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 #include "esp_timer.h"
-#include "esp_rom_uart.h"
+#include "esp_rom_serial_output.h"
 #include "mbedtls/base64.h"
 #include "lcd1602.h"
 
@@ -195,7 +195,7 @@ static void wifi_init(const char *ssid, const char *pass)
         esp_err_t proto_err = esp_wifi_set_protocol(WIFI_IF_STA,
             WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
         if (proto_err == ESP_OK) {
-            esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+            esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20);
             ESP_LOGI(TAG, "WiFi forced to HT20 mode");
         } else {
             ESP_LOGW(TAG, "set_protocol HT failed: %s", esp_err_to_name(proto_err));
@@ -249,7 +249,7 @@ static void uart_cmd_task(void *pv)
 
     while (true) {
         vTaskDelay(2);   // 2 ticks (~20ms at 100Hz) — pdMS_TO_TICKS(1)=0 on 100Hz, so use ticks directly
-        if (esp_rom_uart_rx_one_char(&ch) != 0) continue;
+        if (esp_rom_output_rx_one_char(&ch) != 0) continue;
         if (ch == '\r') continue;
 
         if (ch == '\n') {
